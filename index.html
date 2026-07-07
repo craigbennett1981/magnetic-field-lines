@@ -1,0 +1,1328 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>FIELDLINE 2 — STL magneto-quasistatic sandbox</title>
+<style>
+  :root{
+    --bg:#0b0f14; --panel:#10161d; --panel2:#161e27; --line:#243140;
+    --text:#c9d6e2; --dim:#6d7f90; --accent:#e8a33d; --good:#56e6d2;
+  }
+  *{box-sizing:border-box; margin:0; padding:0;}
+  html,body{height:100%; overflow:hidden;}
+  body{
+    background:var(--bg); color:var(--text);
+    font:13px/1.45 "IBM Plex Mono","SFMono-Regular",Consolas,Menlo,monospace;
+    display:flex;
+  }
+  #sidebar{
+    width:330px; min-width:330px; height:100%; overflow-y:auto;
+    background:var(--panel); border-right:1px solid var(--line);
+    padding:16px; display:flex; flex-direction:column; gap:12px;
+  }
+  #sidebar::-webkit-scrollbar{width:8px;}
+  #sidebar::-webkit-scrollbar-thumb{background:var(--line); border-radius:4px;}
+  h1{font-size:14px; font-weight:600; letter-spacing:.12em; color:var(--accent);}
+  h1 span{color:var(--dim); font-weight:400; letter-spacing:0; display:block; font-size:11px; margin-top:2px;}
+  .box{background:var(--panel2); border:1px solid var(--line); border-radius:6px; padding:12px;}
+  .lbl{font-size:10px; letter-spacing:.14em; text-transform:uppercase; color:var(--dim); margin-bottom:8px;}
+  #drop{
+    border:1px dashed var(--line); border-radius:6px; padding:16px 12px;
+    text-align:center; color:var(--dim); cursor:pointer; transition:border-color .15s,color .15s;
+  }
+  #drop:hover,#drop.over{border-color:var(--accent); color:var(--accent);}
+  #drop input{display:none;}
+  button{
+    font:inherit; color:var(--text); background:var(--panel2);
+    border:1px solid var(--line); border-radius:5px; padding:7px 10px;
+    cursor:pointer; transition:border-color .15s,background .15s;
+  }
+  button:hover{border-color:var(--accent);}
+  button:focus-visible{outline:2px solid var(--accent); outline-offset:1px;}
+  button.primary{background:var(--accent); color:#141414; border-color:var(--accent); font-weight:600; flex:1;}
+  button.primary:disabled{opacity:.4; cursor:default;}
+  button.small{padding:3px 8px; font-size:11px;}
+  .row{display:flex; gap:8px; align-items:center;}
+  input[type=number]{
+    font:inherit; width:54px; background:var(--bg); color:var(--text);
+    border:1px solid var(--line); border-radius:4px; padding:4px 5px;
+  }
+  input[type=number]:focus{outline:none; border-color:var(--accent);}
+  select{
+    font:inherit; font-size:12px; background:var(--bg); color:var(--text);
+    border:1px solid var(--line); border-radius:4px; padding:4px 5px; width:100%;
+  }
+  select.inline{width:auto; flex:1;}
+  select:focus{outline:none; border-color:var(--accent);}
+  input[type=range]{width:100%; accent-color:var(--accent);}
+  input[type=checkbox]{accent-color:var(--accent);}
+  .mat-note{color:var(--dim); font-size:11px; margin-top:2px;}
+  .body-card{background:var(--panel2); border:1px solid var(--line); border-radius:6px; padding:10px; margin-bottom:8px;}
+  .body-card .head{display:flex; align-items:center; gap:8px; margin-bottom:8px;}
+  .chip{width:12px; height:12px; border-radius:3px; flex:none;}
+  .body-card .name{font-weight:600;}
+  .body-card .tris{color:var(--dim); font-size:11px; margin-left:auto;}
+  .vec{display:flex; gap:6px; align-items:center; margin-bottom:6px; flex-wrap:wrap;}
+  .vec em{font-style:normal; color:var(--dim); font-size:11px; width:58px; flex:none;}
+  #status{color:var(--dim); font-size:12px; min-height:18px;}
+  #status.busy{color:var(--good);}
+  #legend{height:8px; border-radius:4px; margin-top:8px;
+    background:linear-gradient(90deg,#2244ff,#22ccdd,#ffd24d,#ff4422);}
+  .legend-lbl{display:flex; justify-content:space-between; color:var(--dim); font-size:10px; margin-top:3px;}
+  #viewport{flex:1; position:relative;}
+  #viewport canvas{display:block;}
+  #hint{position:absolute; bottom:10px; right:14px; color:var(--dim); font-size:11px;
+    pointer-events:none; text-align:right;}
+  #timebar{position:absolute; top:10px; left:14px; color:var(--good); font-size:12px; pointer-events:none;}
+  @media (prefers-reduced-motion: reduce){ *{transition:none !important;} }
+  @media (max-width:760px){
+    body{flex-direction:column;}
+    #sidebar{width:100%; min-width:0; height:50%; border-right:none; border-bottom:1px solid var(--line);}
+  }
+</style>
+</head>
+<body>
+<aside id="sidebar">
+  <h1>FIELDLINE 2<span>magneto-quasistatic STL sandbox — qualitative physics</span></h1>
+
+  <div id="drop">drop an .stl here or click to browse
+    <input type="file" id="file" accept=".stl"></div>
+  <div class="row">
+    <button id="demo1" class="small">demo: snap</button>
+    <button id="demo2" class="small">demo: rotor + iron</button>
+    <button id="demo3" class="small">demo: drop on copper</button>
+  </div>
+
+  <div class="box" id="simBox" style="display:none">
+    <div class="lbl">Simulation</div>
+    <div class="row" style="margin-bottom:8px">
+      <button class="primary" id="play">&#9654; Play</button>
+      <button id="reset">Reset</button>
+    </div>
+    <div class="vec"><em>STL units</em>
+      <select id="units" class="inline">
+        <option value="0.001" selected>millimetres</option>
+        <option value="0.01">centimetres</option>
+        <option value="1">metres</option>
+      </select>
+    </div>
+    <div class="vec"><em>speed</em>
+      <select id="speed" class="inline">
+        <option value="0.05">0.05&times; (eddy scale)</option>
+        <option value="0.1">0.1&times;</option>
+        <option value="0.25">0.25&times;</option>
+        <option value="1" selected>1&times; real time</option>
+        <option value="2">2&times;</option>
+      </select>
+    </div>
+    <div class="vec"><em>gravity</em><input type="checkbox" id="gravity"></div>
+    <div class="vec"><em>live lines</em><input type="checkbox" id="live" checked></div>
+  </div>
+
+  <div class="box" id="bodiesBox" style="display:none">
+    <div class="lbl">Bodies <span id="bodyCount" style="color:var(--text)"></span></div>
+    <div id="bodies"></div>
+  </div>
+
+  <div class="box" id="traceBox" style="display:none">
+    <div class="lbl">Field lines</div>
+    <div class="vec"><em>lines/pole</em>
+      <input type="range" id="lines" min="4" max="250" step="2" value="80" style="flex:1">
+      <span id="linesVal">80</span>
+    </div>
+    <button class="primary" id="trace" style="width:100%">Trace field lines</button>
+    <div id="legend"></div>
+    <div class="legend-lbl"><span>weak |B|</span><span>strong |B|</span></div>
+  </div>
+
+  <div id="status">load an STL or a demo to begin</div>
+</aside>
+
+<div id="viewport">
+  <div id="timebar"></div>
+  <div id="hint">drag rotate &middot; wheel zoom &middot; shift-drag pan</div>
+</div>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+<script>
+"use strict";
+/* =====================================================================
+ FIELDLINE 2 — magneto-quasistatic sandbox.
+ Models (all reduced-order, qualitative):
+  - Permanent magnets: equivalent surface charges q = mu0M.(nA), Br from material.
+  - Soft material: moment method — interior cells each carry mu0M solved
+    self-consistently (Gauss-Seidel, relaxed), Frohlich-Kennelly saturation
+    chi(H) = chi0/(1+chi0|mu0H|/Ms), per-cell demag via chi_eff = chi/(1+chi/3).
+  - Eddy currents: each conductive body carries a coarse grid of "eddy
+    dipoles" d obeying tau d' = -d - tau*2*pi*a^3 dB/dt (single-pole model of
+    a conducting sphere; exact exponential integrator, so any dt is stable).
+    Captures Lenz opposition, braking, and frequency dependence; not skin depth.
+  - Rigid bodies: F on charges qB/mu0, on dipoles grad(d.B)/mu0, torques,
+    gravity, impulse contacts with stick damping.
+ Unit system: geometry stays in STL units; B in tesla is unit-invariant for
+ both charge and dipole sums, so only mass, force, tau and gravity use the
+ unit scale u (metres per STL unit).
+===================================================================== */
+
+const MU0 = 4*Math.PI*1e-7, INV4PI = 1/(4*Math.PI);
+
+// ---------- materials: Br(T) | muR + Ms(T) | chi ; rho kg/m^3 ; sigma S/m ----
+const MATERIALS = {
+  ndfeb_n35:   {name:'NdFeB N35',            cat:'perm', Br:1.17, rho:7500, sigma:6.7e5},
+  ndfeb_n42:   {name:'NdFeB N42',            cat:'perm', Br:1.30, rho:7500, sigma:6.7e5},
+  ndfeb_n52:   {name:'NdFeB N52',            cat:'perm', Br:1.45, rho:7500, sigma:6.7e5},
+  smco:        {name:'SmCo (Sm\u2082Co\u2081\u2087)', cat:'perm', Br:1.05, rho:8400, sigma:1.2e6},
+  alnico5:     {name:'Alnico 5',             cat:'perm', Br:1.28, rho:7300, sigma:2.0e6},
+  ferrite_c8:  {name:'Hard ferrite (C8)',    cat:'perm', Br:0.39, rho:4900, sigma:1e-4},
+  bonded:      {name:'Bonded / flexible',    cat:'perm', Br:0.25, rho:6000, sigma:1e-3},
+
+  iron:        {name:'Iron (pure)',          cat:'soft', muR:5000,  Ms:2.15, rho:7870, sigma:1.0e7},
+  steel1018:   {name:'Mild steel (1018)',    cat:'soft', muR:800,   Ms:2.00, rho:7850, sigma:6.0e6},
+  sisteel:     {name:'Silicon steel',        cat:'soft', muR:4000,  Ms:1.97, rho:7650, sigma:2.0e6},
+  ss430:       {name:'Stainless 430 (ferritic)', cat:'soft', muR:600, Ms:1.50, rho:7700, sigma:1.7e6},
+  mumetal:     {name:'Mu-metal',             cat:'soft', muR:80000, Ms:0.75, rho:8700, sigma:1.7e6},
+  permalloy:   {name:'Permalloy 80',         cat:'soft', muR:100000,Ms:1.00, rho:8700, sigma:2.0e6},
+  ferrite_soft:{name:'Soft ferrite (MnZn)',  cat:'soft', muR:2500,  Ms:0.50, rho:4800, sigma:1},
+
+  ss304:       {name:'Stainless 304 (austenitic)', cat:'para', chi:3e-3,   rho:8000,  sigma:1.4e6},
+  aluminum:    {name:'Aluminium',            cat:'para', chi:2.2e-5, rho:2700,  sigma:3.5e7},
+  titanium:    {name:'Titanium',             cat:'para', chi:1.8e-4, rho:4500,  sigma:2.4e6},
+  platinum:    {name:'Platinum',             cat:'para', chi:2.6e-4, rho:21450, sigma:9.4e6},
+  tungsten:    {name:'Tungsten',             cat:'para', chi:6.8e-5, rho:19300, sigma:1.8e7},
+
+  copper:      {name:'Copper',               cat:'dia', chi:-9.6e-6,  rho:8960,  sigma:5.96e7},
+  gold:        {name:'Gold',                 cat:'dia', chi:-3.4e-5,  rho:19300, sigma:4.1e7},
+  silver:      {name:'Silver',               cat:'dia', chi:-2.4e-5,  rho:10490, sigma:6.3e7},
+  bismuth:     {name:'Bismuth',              cat:'dia', chi:-1.66e-4, rho:9780,  sigma:7.7e5},
+  graphite:    {name:'Pyrolytic graphite',   cat:'dia', chi:-4e-4,    rho:2200,  sigma:2e5},
+
+  plastic:     {name:'Plastic / non-magnetic', cat:'none', rho:1200, sigma:0}
+};
+const MAT_GROUPS = {perm:'Permanent magnets', soft:'Soft magnetic', para:'Paramagnetic', dia:'Diamagnetic', none:'Non-magnetic'};
+const CONDUCTIVE = 1e5;   // sigma above this gets an eddy model
+
+// ---------- three.js scene ----------
+const viewport = document.getElementById('viewport');
+const renderer = new THREE.WebGLRenderer({antialias:true});
+renderer.setPixelRatio(Math.min(devicePixelRatio,2));
+viewport.appendChild(renderer.domElement);
+const scene = new THREE.Scene();
+scene.background = new THREE.Color(0x0b0f14);
+const camera = new THREE.PerspectiveCamera(50, 1, 0.01, 5000);
+scene.add(new THREE.HemisphereLight(0x8899bb, 0x111418, 0.9));
+const keyL = new THREE.DirectionalLight(0xffffff, 0.8); keyL.position.set(1,1.4,0.8); scene.add(keyL);
+const fillL = new THREE.DirectionalLight(0x88aaff, 0.25); fillL.position.set(-1,-0.4,-0.8); scene.add(fillL);
+let gridHelper=null, lineGroup=null;
+
+const ctrl = {theta:0.9, phi:1.05, radius:10, target:new THREE.Vector3()};
+function applyCamera(){
+  const sp=Math.sin(ctrl.phi), cp=Math.cos(ctrl.phi);
+  camera.position.set(
+    ctrl.target.x+ctrl.radius*sp*Math.cos(ctrl.theta),
+    ctrl.target.y+ctrl.radius*cp,
+    ctrl.target.z+ctrl.radius*sp*Math.sin(ctrl.theta));
+  camera.lookAt(ctrl.target);
+}
+let drag=null;
+renderer.domElement.addEventListener('pointerdown', e=>{
+  drag={x:e.clientX,y:e.clientY,pan:(e.shiftKey||e.button===2||e.button===1)};
+  renderer.domElement.setPointerCapture(e.pointerId);
+});
+renderer.domElement.addEventListener('pointermove', e=>{
+  if(!drag) return;
+  const dx=e.clientX-drag.x, dy=e.clientY-drag.y; drag.x=e.clientX; drag.y=e.clientY;
+  if(drag.pan){
+    const s=ctrl.radius*0.0016;
+    const right=new THREE.Vector3().setFromMatrixColumn(camera.matrix,0);
+    const up=new THREE.Vector3().setFromMatrixColumn(camera.matrix,1);
+    ctrl.target.addScaledVector(right,-dx*s).addScaledVector(up,dy*s);
+  }else{
+    ctrl.theta+=dx*0.006;
+    ctrl.phi=Math.min(Math.PI-0.05,Math.max(0.05,ctrl.phi-dy*0.006));
+  }
+  applyCamera();
+});
+renderer.domElement.addEventListener('pointerup', ()=>drag=null);
+renderer.domElement.addEventListener('wheel', e=>{
+  e.preventDefault(); ctrl.radius*=Math.exp(e.deltaY*0.0011); applyCamera();
+},{passive:false});
+renderer.domElement.addEventListener('contextmenu', e=>e.preventDefault());
+function resize(){
+  const w=viewport.clientWidth,h=viewport.clientHeight;
+  renderer.setSize(w,h); camera.aspect=w/h; camera.updateProjectionMatrix();
+}
+addEventListener('resize',resize); resize();
+
+// ---------- state ----------
+let bodies=[];
+let sceneDiag=1, sceneCenter=[0,0,0];
+let SRC=null;            // flattened field sources (live)
+let anySoft=false, anyEddy=false, anyFree=false;
+let playing=false, simTime=0;
+const SIM = {u:0.001, g:9.81, gravity:false, speed:1, h:1/120};
+const PALETTE=[0x56e6d2,0xe8a33d,0xd06bff,0x6bb2ff,0xff6b8a,0x9dff6b,0xffde59,0xff9d5c];
+const statusEl=document.getElementById('status');
+const timebar=document.getElementById('timebar');
+function setStatus(m,busy){statusEl.textContent=m; statusEl.className=busy?'busy':'';}
+
+// ---------- STL parsing ----------
+function parseSTL(buffer){
+  const dv=new DataView(buffer);
+  const head=new TextDecoder().decode(new Uint8Array(buffer,0,Math.min(512,buffer.byteLength)));
+  const looksAscii=/^\s*solid/.test(head)&&head.includes('facet');
+  if(buffer.byteLength>=84){
+    const n=dv.getUint32(80,true);
+    if(84+n*50===buffer.byteLength) return parseBinary(dv,n);
+  }
+  if(looksAscii) return parseAscii(new TextDecoder().decode(buffer));
+  return parseBinary(dv,dv.getUint32(80,true));
+}
+function parseBinary(dv,n){
+  const pos=new Float32Array(n*9); let o=84;
+  for(let i=0;i<n;i++){ o+=12;
+    for(let k=0;k<9;k++){pos[i*9+k]=dv.getFloat32(o,true); o+=4;} o+=2; }
+  return pos;
+}
+function parseAscii(text){
+  const re=/vertex\s+([-+\d.eE]+)\s+([-+\d.eE]+)\s+([-+\d.eE]+)/g;
+  const arr=[]; let m;
+  while((m=re.exec(text))) arr.push(+m[1],+m[2],+m[3]);
+  const n=Math.floor(arr.length/9);
+  return Float32Array.from(arr.slice(0,n*9));
+}
+
+// ---------- connected components ----------
+function splitBodies(pos){
+  const nTri=pos.length/9;
+  let mn=[1e30,1e30,1e30], mx=[-1e30,-1e30,-1e30];
+  for(let i=0;i<pos.length;i+=3) for(let k=0;k<3;k++){
+    mn[k]=Math.min(mn[k],pos[i+k]); mx[k]=Math.max(mx[k],pos[i+k]);
+  }
+  const diag=Math.hypot(mx[0]-mn[0],mx[1]-mn[1],mx[2]-mn[2])||1;
+  const eps=diag*1e-5;
+  const parent=new Int32Array(nTri); for(let i=0;i<nTri;i++)parent[i]=i;
+  const find=a=>{while(parent[a]!==a){parent[a]=parent[parent[a]];a=parent[a];}return a;};
+  const union=(a,b)=>{a=find(a);b=find(b);if(a!==b)parent[b]=a;};
+  const map=new Map();
+  for(let t=0;t<nTri;t++) for(let v=0;v<3;v++){
+    const i=t*9+v*3;
+    const key=Math.round((pos[i]-mn[0])/eps)+','+Math.round((pos[i+1]-mn[1])/eps)+','+Math.round((pos[i+2]-mn[2])/eps);
+    const prev=map.get(key);
+    if(prev===undefined) map.set(key,t); else union(prev,t);
+  }
+  const groups=new Map();
+  for(let t=0;t<nTri;t++){const r=find(t); if(!groups.has(r))groups.set(r,[]); groups.get(r).push(t);}
+  const out=[];
+  for(const tris of groups.values()){
+    const p=new Float32Array(tris.length*9);
+    for(let j=0;j<tris.length;j++) p.set(pos.subarray(tris[j]*9,tris[j]*9+9),j*9);
+    out.push(p);
+  }
+  out.sort((a,b)=>b.length-a.length);
+  return {parts:out, diag};
+}
+
+// ---------- geometry helpers (all in body-local, centered frame) ----------
+function areaCentroid(tris){
+  let c=[0,0,0], aSum=0;
+  for(let i=0;i<tris.length;i+=9){
+    const e1=[tris[i+3]-tris[i],tris[i+4]-tris[i+1],tris[i+5]-tris[i+2]];
+    const e2=[tris[i+6]-tris[i],tris[i+7]-tris[i+1],tris[i+8]-tris[i+2]];
+    const nx=e1[1]*e2[2]-e1[2]*e2[1], ny=e1[2]*e2[0]-e1[0]*e2[2], nz=e1[0]*e2[1]-e1[1]*e2[0];
+    const a=Math.hypot(nx,ny,nz)*0.5;
+    c[0]+=(tris[i]+tris[i+3]+tris[i+6])/3*a;
+    c[1]+=(tris[i+1]+tris[i+4]+tris[i+7])/3*a;
+    c[2]+=(tris[i+2]+tris[i+5]+tris[i+8])/3*a;
+    aSum+=a;
+  }
+  if(aSum>0){c[0]/=aSum;c[1]/=aSum;c[2]/=aSum;}
+  return c;
+}
+function clusterTris(tris,cell){
+  const cells=new Map();
+  for(let i=0;i<tris.length;i+=9){
+    const ax=tris[i],ay=tris[i+1],az=tris[i+2],bx=tris[i+3],by=tris[i+4],bz=tris[i+5],cx=tris[i+6],cy=tris[i+7],cz=tris[i+8];
+    const e1x=bx-ax,e1y=by-ay,e1z=bz-az,e2x=cx-ax,e2y=cy-ay,e2z=cz-az;
+    const nx=(e1y*e2z-e1z*e2y)*.5, ny=(e1z*e2x-e1x*e2z)*.5, nz=(e1x*e2y-e1y*e2x)*.5;
+    const A=Math.hypot(nx,ny,nz); if(A<1e-14) continue;
+    const px=(ax+bx+cx)/3, py=(ay+by+cy)/3, pz=(az+bz+cz)/3;
+    const k=Math.floor(px/cell)+','+Math.floor(py/cell)+','+Math.floor(pz/cell);
+    let c=cells.get(k);
+    if(!c){c={x:0,y:0,z:0,w:0,sx:0,sy:0,sz:0}; cells.set(k,c);}
+    c.x+=px*A;c.y+=py*A;c.z+=pz*A;c.w+=A;c.sx+=nx;c.sy+=ny;c.sz+=nz;
+  }
+  const n=cells.size, pos=new Float64Array(n*3), S=new Float64Array(n*3);
+  let j=0;
+  for(const c of cells.values()){
+    pos[j*3]=c.x/c.w; pos[j*3+1]=c.y/c.w; pos[j*3+2]=c.z/c.w;
+    S[j*3]=c.sx; S[j*3+1]=c.sy; S[j*3+2]=c.sz; j++;
+  }
+  return {pos,S,n};
+}
+// Moller-Trumbore, returns t or Infinity
+function rayTri(ox,oy,oz,dx,dy,dz,t,i){
+  const ax=t[i],ay=t[i+1],az=t[i+2];
+  const e1x=t[i+3]-ax,e1y=t[i+4]-ay,e1z=t[i+5]-az;
+  const e2x=t[i+6]-ax,e2y=t[i+7]-ay,e2z=t[i+8]-az;
+  const px=dy*e2z-dz*e2y, py=dz*e2x-dx*e2z, pz=dx*e2y-dy*e2x;
+  const det=e1x*px+e1y*py+e1z*pz;
+  if(Math.abs(det)<1e-12) return Infinity;
+  const inv=1/det, tx=ox-ax, ty=oy-ay, tz=oz-az;
+  const u=(tx*px+ty*py+tz*pz)*inv; if(u<0||u>1) return Infinity;
+  const qx=ty*e1z-tz*e1y, qy=tz*e1x-tx*e1z, qz=tx*e1y-ty*e1x;
+  const v=(dx*qx+dy*qy+dz*qz)*inv; if(v<0||u+v>1) return Infinity;
+  const tt=(e2x*qx+e2y*qy+e2z*qz)*inv;
+  return tt>1e-9?tt:Infinity;
+}
+function insideVotes(tris,x,y,z){
+  let votes=0;
+  const dirs=[[1,0,0],[0,1,0],[0,0,1]];
+  for(const d of dirs){
+    let hits=0;
+    for(let i=0;i<tris.length;i+=9)
+      if(rayTri(x,y,z,d[0],d[1],d[2],tris,i)<Infinity) hits++;
+    if(hits%2===1) votes++;
+  }
+  return votes>=2;
+}
+// interior fill grid: {occ,nx,ny,nz,min,cell,cells:{pos,vol}}
+function voxelFill(tris,targetCells){
+  let mn=[1e30,1e30,1e30],mx=[-1e30,-1e30,-1e30];
+  for(let i=0;i<tris.length;i+=3) for(let k=0;k<3;k++){
+    mn[k]=Math.min(mn[k],tris[i+k]); mx[k]=Math.max(mx[k],tris[i+k]);
+  }
+  const ex=Math.max(mx[0]-mn[0],1e-9),ey=Math.max(mx[1]-mn[1],1e-9),ez=Math.max(mx[2]-mn[2],1e-9);
+  let pitch=Math.cbrt(ex*ey*ez/targetCells);
+  const nx=Math.max(1,Math.min(24,Math.round(ex/pitch)));
+  const ny=Math.max(1,Math.min(24,Math.round(ey/pitch)));
+  const nz=Math.max(1,Math.min(24,Math.round(ez/pitch)));
+  const cx=ex/nx, cy=ey/ny, cz=ez/nz, vol=cx*cy*cz;
+  const occ=new Uint8Array(nx*ny*nz);
+  const cp=[],cv=[];
+  for(let k=0;k<nz;k++)for(let j=0;j<ny;j++)for(let i=0;i<nx;i++){
+    const x=mn[0]+(i+.5)*cx, y=mn[1]+(j+.5)*cy, z=mn[2]+(k+.5)*cz;
+    if(insideVotes(tris,x,y,z)){ occ[(k*ny+j)*nx+i]=1; cp.push(x,y,z); cv.push(vol); }
+  }
+  if(cp.length===0){ // non-watertight fallback: single lump at centroid
+    cp.push(mn[0]+ex/2,mn[1]+ey/2,mn[2]+ez/2); cv.push(ex*ey*ez*0.5);
+    occ.fill(1);
+  }
+  return {occ,nx,ny,nz,min:mn,cellX:cx,cellY:cy,cellZ:cz,
+          cellP:Float64Array.from(cp), cellV:Float64Array.from(cv)};
+}
+function downsampleCells(cellP,cellV,groups){
+  // merge fill cells into <=groups super-cells (volume-weighted)
+  const n=cellV.length; if(n<=groups) return {p:cellP.slice(),v:cellV.slice()};
+  let mn=[1e30,1e30,1e30],mx=[-1e30,-1e30,-1e30];
+  for(let i=0;i<n;i++) for(let k=0;k<3;k++){
+    mn[k]=Math.min(mn[k],cellP[i*3+k]); mx[k]=Math.max(mx[k],cellP[i*3+k]);
+  }
+  const g=Math.max(1,Math.round(Math.cbrt(groups)));
+  const sx=(mx[0]-mn[0])/g+1e-9, sy=(mx[1]-mn[1])/g+1e-9, sz=(mx[2]-mn[2])/g+1e-9;
+  const map=new Map();
+  for(let i=0;i<n;i++){
+    const k=Math.min(g-1,Math.floor((cellP[i*3]-mn[0])/sx))+','+
+            Math.min(g-1,Math.floor((cellP[i*3+1]-mn[1])/sy))+','+
+            Math.min(g-1,Math.floor((cellP[i*3+2]-mn[2])/sz));
+    let c=map.get(k); if(!c){c={x:0,y:0,z:0,v:0};map.set(k,c);}
+    const v=cellV[i];
+    c.x+=cellP[i*3]*v; c.y+=cellP[i*3+1]*v; c.z+=cellP[i*3+2]*v; c.v+=v;
+  }
+  const p=[],v=[];
+  for(const c of map.values()){p.push(c.x/c.v,c.y/c.v,c.z/c.v); v.push(c.v);}
+  return {p:Float64Array.from(p), v:Float64Array.from(v)};
+}
+
+// ---------- body construction ----------
+async function loadGeometry(pos, sourceName, setup){
+  clearAll();
+  const {parts,diag}=splitBodies(pos);
+  sceneDiag=diag;
+  const clusterCell=diag/34, forceCell=diag/14;
+  setStatus('voxelizing bodies…',true);
+  for(let i=0;i<parts.length;i++){
+    let tris=parts[i];
+    const center=areaCentroid(tris);
+    tris=Float32Array.from(tris);
+    for(let k=0;k<tris.length;k+=3){tris[k]-=center[0];tris[k+1]-=center[1];tris[k+2]-=center[2];}
+    const cl=clusterTris(tris,clusterCell);
+    const fc=clusterTris(tris,forceCell);
+    const fill=voxelFill(tris, 300);
+    await new Promise(r=>setTimeout(r,0));
+    // bounding radius + bbox extents for defaults
+    let rad=0, mn=[1e30,1e30,1e30], mx=[-1e30,-1e30,-1e30];
+    for(let k=0;k<tris.length;k+=3){
+      rad=Math.max(rad,Math.hypot(tris[k],tris[k+1],tris[k+2]));
+      for(let a=0;a<3;a++){mn[a]=Math.min(mn[a],tris[k+a]);mx[a]=Math.max(mx[a],tris[k+a]);}
+    }
+    const ext=[mx[0]-mn[0],mx[1]-mn[1],mx[2]-mn[2]];
+    const axis=[0,0,0]; axis[ext.indexOf(Math.max(...ext))]=1;
+    const eddy=downsampleCells(fill.cellP,fill.cellV,27);
+    const fSamp=downsampleCells(fill.cellP,fill.cellV,24);
+    const color=PALETTE[i%PALETTE.length];
+    const geo=new THREE.BufferGeometry();
+    geo.setAttribute('position',new THREE.Float32BufferAttribute(tris,3));
+    geo.computeVertexNormals();
+    const mesh=new THREE.Mesh(geo,new THREE.MeshPhongMaterial({
+      color,shininess:22,transparent:true,opacity:0.92,side:THREE.DoubleSide}));
+    scene.add(mesh);
+    const b={
+      name:'B'+(i+1), color, tris, mesh, arrow:null,
+      material:'ndfeb_n42', Br:MATERIALS.ndfeb_n42.Br, Mloc:[...axis],
+      clP:cl.pos, clS:cl.S, nCl:cl.n, q:new Float64Array(cl.n),
+      fcP:fc.pos, fcS:fc.S, nFc:fc.n, fq:new Float64Array(fc.n),
+      fill, cellP:fill.cellP, cellV:fill.cellV, nCell:fill.cellV.length,
+      edP:eddy.p, edV:eddy.v, nEd:eddy.v.length,
+      fsP:fSamp.p, fsV:fSamp.v,
+      radius:rad, arrowLen:Math.max(Math.hypot(...ext)*0.85, diag*0.08),
+      // pose/state
+      pos:[center[0],center[1],center[2]], pos0:[...center],
+      homePos:[...center], homeQuat:new THREE.Quaternion(), tRef:0,
+      quat:new THREE.Quaternion(), quat0:new THREE.Quaternion(),
+      vel:[0,0,0], omega:[0,0,0],
+      motion:{mode:'static', axis:[0,1,0], rpm:120, amp:diag*0.1, hz:1, v:[0,0,0]},
+      // solved state
+      cellM:new Float64Array(fill.cellV.length*3),
+      edD:new Float64Array(eddy.v.length*3),
+      edBprev:new Float64Array(eddy.v.length*3), edInit:false,
+      mass:1, invMass:1, I:1, invI:1
+    };
+    bodies.push(b);
+  }
+  sceneCenter=[0,0,0];
+  bodies.forEach(b=>{for(let k=0;k<3;k++)sceneCenter[k]+=b.pos[k]/bodies.length;});
+  gridHelper=new THREE.GridHelper(diag*2.4,24,0x2a3846,0x1a2530);
+  let minY=1e30; bodies.forEach(b=>minY=Math.min(minY,b.pos[1]-b.radius));
+  gridHelper.position.set(sceneCenter[0],minY-diag*0.02,sceneCenter[2]);
+  scene.add(gridHelper);
+  ctrl.target.set(...sceneCenter); ctrl.radius=diag*1.6; applyCamera();
+  if(setup) setup();
+  refreshDerived();
+  allocSources();
+  buildSources();
+  softSolve(24);
+  bodies.forEach(updateArrow);
+  syncMeshes();
+  buildBodyUI();
+  document.getElementById('bodiesBox').style.display='block';
+  document.getElementById('traceBox').style.display='block';
+  document.getElementById('simBox').style.display='block';
+  setStatus(sourceName+': '+bodies.length+' bodies, '+(pos.length/9)+' triangles');
+  requestTrace(true);
+}
+function clearAll(){
+  pause();
+  simTime=0; timebar.textContent='';
+  for(const b of bodies){ if(b.mesh)scene.remove(b.mesh); if(b.arrow)scene.remove(b.arrow); }
+  if(lineGroup){scene.remove(lineGroup); lineGroup=null;}
+  if(gridHelper){scene.remove(gridHelper); gridHelper=null;}
+  bodies=[]; SRC=null;
+}
+// mass, inertia, permanent charges, flags — call on material/unit change
+function refreshDerived(){
+  const u=SIM.u;
+  anySoft=false; anyEddy=false;
+  for(const b of bodies){
+    const mat=MATERIALS[b.material];
+    let vol=0; for(const v of b.cellV) vol+=v;
+    b.mass=Math.max(1e-9, mat.rho*vol*u*u*u);
+    b.invMass=1/b.mass;
+    let I=0;
+    for(let i=0;i<b.nCell;i++){
+      const r2=(b.cellP[i*3]**2+b.cellP[i*3+1]**2+b.cellP[i*3+2]**2)*u*u;
+      I+=mat.rho*b.cellV[i]*u*u*u*(r2+ (Math.cbrt(b.cellV[i])*u)**2/6 );
+    }
+    b.I=Math.max(1e-12,I*0.8); b.invI=1/b.I;   // isotropic approximation
+    b.isSoft = mat.cat==='soft'||mat.cat==='para'||mat.cat==='dia';
+    b.isEddy = (mat.sigma||0)>CONDUCTIVE;
+    if(b.isSoft) anySoft=true;
+    if(b.isEddy) anyEddy=true;
+    if(!b.isSoft) b.cellM.fill(0);
+    if(!b.isEddy){ b.edD.fill(0); b.edInit=false; }
+    for(let j=0;j<b.nEd;j++){
+      const a=Math.cbrt(3*b.edV[j]/(4*Math.PI));
+      b['edA3_'+j]=undefined;
+    }
+    b.edA3=new Float64Array(b.nEd); b.edTau=new Float64Array(b.nEd);
+    for(let j=0;j<b.nEd;j++){
+      const a=Math.cbrt(3*b.edV[j]/(4*Math.PI));       // STL units
+      b.edA3[j]=2*Math.PI*a*a*a;                        // 2*pi*a^3 (unit-space)
+      b.edTau[j]=MU0*(mat.sigma||0)*(a*u)*(a*u)/(Math.PI*Math.PI); // seconds
+    }
+    updatePermQ(b);
+  }
+  anyFree = bodies.some(b=>b.motion.mode==='free');
+}
+function updatePermQ(b){
+  const mat=MATERIALS[b.material];
+  if(mat.cat!=='perm'){ b.q.fill(0); b.fq.fill(0); return; }
+  const ml=Math.hypot(...b.Mloc)||1;
+  const mx=b.Mloc[0]/ml*b.Br, my=b.Mloc[1]/ml*b.Br, mz=b.Mloc[2]/ml*b.Br;
+  for(let i=0;i<b.nCl;i++) b.q[i]=mx*b.clS[i*3]+my*b.clS[i*3+1]+mz*b.clS[i*3+2];
+  for(let i=0;i<b.nFc;i++) b.fq[i]=mx*b.fcS[i*3]+my*b.fcS[i*3+1]+mz*b.fcS[i*3+2];
+}
+
+// ---------- flattened field sources ----------
+function allocSources(){
+  let nc=0, nd=0;
+  for(const b of bodies){
+    const mat=MATERIALS[b.material];
+    if(mat.cat==='perm'){ b.c0=nc; nc+=b.nCl; } else b.c0=-1;
+    b.d0=-1; b.e0=-1;
+    if(b.isSoft){ b.d0=nd; nd+=b.nCell; }
+    if(b.isEddy){ b.e0=nd; nd+=b.nEd; }
+  }
+  SRC={
+    nc, nd,
+    cP:new Float64Array(nc*3), cQ:new Float64Array(nc), cB:new Int16Array(nc),
+    dP:new Float64Array(nd*3), dD:new Float64Array(nd*3), dB:new Int16Array(nd),
+    soft: Math.pow(sceneDiag/120,2)
+  };
+  bodies.forEach((b,bi)=>{
+    if(b.c0>=0) SRC.cB.fill(bi,b.c0,b.c0+b.nCl);
+    if(b.d0>=0) SRC.dB.fill(bi,b.d0,b.d0+b.nCell);
+    if(b.e0>=0) SRC.dB.fill(bi,b.e0,b.e0+b.nEd);
+  });
+}
+function rotOf(b){
+  const q=b.quat, x=q.x,y=q.y,z=q.z,w=q.w;
+  return [1-2*(y*y+z*z),2*(x*y-w*z),2*(x*z+w*y),
+          2*(x*y+w*z),1-2*(x*x+z*z),2*(y*z-w*x),
+          2*(x*z-w*y),2*(y*z+w*x),1-2*(x*x+y*y)];
+}
+function xform(R,p,px,py,pz,out,o){ // world = R*local + p
+  out[o]  =R[0]*px+R[1]*py+R[2]*pz+p[0];
+  out[o+1]=R[3]*px+R[4]*py+R[5]*pz+p[1];
+  out[o+2]=R[6]*px+R[7]*py+R[8]*pz+p[2];
+}
+function buildSources(){
+  for(const b of bodies){
+    const R=rotOf(b); b.R=R;
+    if(b.c0>=0){
+      for(let i=0;i<b.nCl;i++){
+        xform(R,b.pos,b.clP[i*3],b.clP[i*3+1],b.clP[i*3+2],SRC.cP,(b.c0+i)*3);
+        SRC.cQ[b.c0+i]=b.q[i];   // rotation-invariant
+      }
+    }
+    if(b.d0>=0){
+      for(let i=0;i<b.nCell;i++){
+        xform(R,b.pos,b.cellP[i*3],b.cellP[i*3+1],b.cellP[i*3+2],SRC.dP,(b.d0+i)*3);
+        const gi=(b.d0+i)*3;
+        SRC.dD[gi]  =b.cellM[i*3]  *b.cellV[i];
+        SRC.dD[gi+1]=b.cellM[i*3+1]*b.cellV[i];
+        SRC.dD[gi+2]=b.cellM[i*3+2]*b.cellV[i];
+      }
+    }
+    if(b.e0>=0){
+      for(let j=0;j<b.nEd;j++){
+        xform(R,b.pos,b.edP[j*3],b.edP[j*3+1],b.edP[j*3+2],SRC.dP,(b.e0+j)*3);
+        const gi=(b.e0+j)*3;
+        SRC.dD[gi]=b.edD[j*3]; SRC.dD[gi+1]=b.edD[j*3+1]; SRC.dD[gi+2]=b.edD[j*3+2];
+      }
+    }
+  }
+}
+// B (tesla) at unit-space point; excl body index exB, excl dipole index exD
+const _B=new Float64Array(3);
+function fieldCore(S,x,y,z,exB,exD){
+  let bx=0,by=0,bz=0;
+  const soft=S.soft;
+  for(let i=0;i<S.nc;i++){
+    if(S.cB[i]===exB) continue;
+    const dx=x-S.cP[i*3],dy=y-S.cP[i*3+1],dz=z-S.cP[i*3+2];
+    const r2=dx*dx+dy*dy+dz*dz+soft;
+    const inv=S.cQ[i]/(r2*Math.sqrt(r2));
+    bx+=dx*inv; by+=dy*inv; bz+=dz*inv;
+  }
+  for(let i=0;i<S.nd;i++){
+    if(S.dB[i]===exB||i===exD) continue;
+    const mx=S.dD[i*3],my=S.dD[i*3+1],mz=S.dD[i*3+2];
+    if(mx===0&&my===0&&mz===0) continue;
+    const dx=x-S.dP[i*3],dy=y-S.dP[i*3+1],dz=z-S.dP[i*3+2];
+    const r2=dx*dx+dy*dy+dz*dz+soft;
+    const r=Math.sqrt(r2), inv3=1/(r2*r);
+    const mr=(mx*dx+my*dy+mz*dz)/r2;
+    bx+=(3*mr*dx-mx)*inv3; by+=(3*mr*dy-my)*inv3; bz+=(3*mr*dz-mz)*inv3;
+  }
+  _B[0]=bx*INV4PI; _B[1]=by*INV4PI; _B[2]=bz*INV4PI;
+  return Math.sqrt(_B[0]*_B[0]+_B[1]*_B[1]+_B[2]*_B[2]);
+}
+const fieldAt=(x,y,z,exB=-1,exD=-1)=>fieldCore(SRC,x,y,z,exB,exD);
+
+// ---------- soft magnetization: Gauss-Seidel moment method ----------
+function softSolve(iters){
+  if(!anySoft) return;
+  for(let it=0;it<iters;it++){
+    for(const b of bodies){
+      if(!b.isSoft) continue;
+      const mat=MATERIALS[b.material];
+      const chi0 = mat.cat==='soft' ? (mat.muR-1) : mat.chi;
+      const Ms = mat.Ms || Infinity;
+      for(let i=0;i<b.nCell;i++){
+        const gi=b.d0+i;
+        fieldAt(SRC.dP[gi*3],SRC.dP[gi*3+1],SRC.dP[gi*3+2],-1,gi);
+        const bx=_B[0],by=_B[1],bz=_B[2];
+        // |mu0 H| estimate with previous M
+        const hx=bx-b.cellM[i*3]/3, hy=by-b.cellM[i*3+1]/3, hz=bz-b.cellM[i*3+2]/3;
+        const hmag=Math.hypot(hx,hy,hz);
+        const chi = isFinite(Ms)? chi0/(1+chi0*hmag/Ms) : chi0;
+        const chieff = chi/(1+chi/3);
+        const relax=0.65;
+        let tx=chieff*bx, ty=chieff*by, tz=chieff*bz;
+        let nx=b.cellM[i*3]+relax*(tx-b.cellM[i*3]);
+        let ny=b.cellM[i*3+1]+relax*(ty-b.cellM[i*3+1]);
+        let nz=b.cellM[i*3+2]+relax*(tz-b.cellM[i*3+2]);
+        if(isFinite(Ms)){
+          const mm=Math.hypot(nx,ny,nz);
+          if(mm>Ms){const f=Ms/mm; nx*=f;ny*=f;nz*=f;}
+        }
+        b.cellM[i*3]=nx; b.cellM[i*3+1]=ny; b.cellM[i*3+2]=nz;
+        SRC.dD[gi*3]=nx*b.cellV[i]; SRC.dD[gi*3+1]=ny*b.cellV[i]; SRC.dD[gi*3+2]=nz*b.cellV[i];
+      }
+    }
+  }
+}
+// ---------- eddy dipoles: exact exponential step ----------
+function eddyStep(dt){
+  if(!anyEddy) return;
+  for(const b of bodies){
+    if(!b.isEddy) continue;
+    for(let j=0;j<b.nEd;j++){
+      const gi=b.e0+j;
+      fieldAt(SRC.dP[gi*3],SRC.dP[gi*3+1],SRC.dP[gi*3+2],-1,gi);
+      if(!b.edInit){ b.edBprev[j*3]=_B[0]; b.edBprev[j*3+1]=_B[1]; b.edBprev[j*3+2]=_B[2]; continue; }
+      const dbx=(_B[0]-b.edBprev[j*3])/dt, dby=(_B[1]-b.edBprev[j*3+1])/dt, dbz=(_B[2]-b.edBprev[j*3+2])/dt;
+      b.edBprev[j*3]=_B[0]; b.edBprev[j*3+1]=_B[1]; b.edBprev[j*3+2]=_B[2];
+      const tau=b.edTau[j], a3=b.edA3[j];
+      const e=Math.exp(-dt/tau);
+      // steady state for constant dB/dt: d* = -2 pi a^3 tau dB/dt
+      const sx=-a3*tau*dbx, sy=-a3*tau*dby, sz=-a3*tau*dbz;
+      b.edD[j*3]  =sx+(b.edD[j*3]  -sx)*e;
+      b.edD[j*3+1]=sy+(b.edD[j*3+1]-sy)*e;
+      b.edD[j*3+2]=sz+(b.edD[j*3+2]-sz)*e;
+      SRC.dD[gi*3]=b.edD[j*3]; SRC.dD[gi*3+1]=b.edD[j*3+1]; SRC.dD[gi*3+2]=b.edD[j*3+2];
+    }
+    b.edInit=true;
+  }
+}
+
+// ---------- forces & rigid-body integration ----------
+function bodyForces(bi,b,F,T){
+  const eps=sceneDiag/200;
+  const R=b.R||rotOf(b);
+  // charge forces (permanent magnets)
+  if(b.c0>=0){
+    const tmp=[0,0,0];
+    for(let i=0;i<b.nFc;i++){
+      xform(R,b.pos,b.fcP[i*3],b.fcP[i*3+1],b.fcP[i*3+2],tmp,0);
+      fieldAt(tmp[0],tmp[1],tmp[2],bi);
+      const q=b.fq[i];
+      F[0]+=q*_B[0]; F[1]+=q*_B[1]; F[2]+=q*_B[2];
+      const rx=tmp[0]-b.pos[0],ry=tmp[1]-b.pos[1],rz=tmp[2]-b.pos[2];
+      T[0]+=ry*q*_B[2]-rz*q*_B[1];
+      T[1]+=rz*q*_B[0]-rx*q*_B[2];
+      T[2]+=rx*q*_B[1]-ry*q*_B[0];
+    }
+  }
+  // dipole forces: soft cells (decimated) + eddy cells, grad(d.B) by FD
+  const dipSets=[];
+  if(b.isSoft){
+    // sample the coarse fsP grid, interpolate M as body-average (cheap)
+    let ax=0,ay=0,az=0,vt=0;
+    for(let i=0;i<b.nCell;i++){
+      ax+=b.cellM[i*3]*b.cellV[i]; ay+=b.cellM[i*3+1]*b.cellV[i]; az+=b.cellM[i*3+2]*b.cellV[i]; vt+=b.cellV[i];
+    }
+    dipSets.push({p:b.fsP, d:(j,v)=>[ax/vt*v, ay/vt*v, az/vt*v], v:b.fsV, n:b.fsV.length});
+  }
+  if(b.isEddy) dipSets.push({p:b.edP, d:(j)=>[b.edD[j*3],b.edD[j*3+1],b.edD[j*3+2]], v:null, n:b.nEd});
+  const tmp=[0,0,0];
+  for(const set of dipSets){
+    for(let j=0;j<set.n;j++){
+      xform(R,b.pos,set.p[j*3],set.p[j*3+1],set.p[j*3+2],tmp,0);
+      const dvec=set.d(j, set.v?set.v[j]:1);
+      const dm=Math.hypot(...dvec); if(dm<1e-20) continue;
+      // B at point (for torque d x B) and FD gradient of (d.B)
+      fieldAt(tmp[0],tmp[1],tmp[2],bi);
+      const B0=[_B[0],_B[1],_B[2]];
+      const g=[0,0,0];
+      for(let ax2=0;ax2<3;ax2++){
+        const o=[...tmp]; o[ax2]+=eps;
+        fieldAt(o[0],o[1],o[2],bi);
+        const up=dvec[0]*_B[0]+dvec[1]*_B[1]+dvec[2]*_B[2];
+        o[ax2]-=2*eps;
+        fieldAt(o[0],o[1],o[2],bi);
+        const dn=dvec[0]*_B[0]+dvec[1]*_B[1]+dvec[2]*_B[2];
+        g[ax2]=(up-dn)/(2*eps);
+      }
+      F[0]+=g[0]; F[1]+=g[1]; F[2]+=g[2];
+      const rx=tmp[0]-b.pos[0],ry=tmp[1]-b.pos[1],rz=tmp[2]-b.pos[2];
+      T[0]+=ry*g[2]-rz*g[1] + (dvec[1]*B0[2]-dvec[2]*B0[1]);
+      T[1]+=rz*g[0]-rx*g[2] + (dvec[2]*B0[0]-dvec[0]*B0[2]);
+      T[2]+=rx*g[1]-ry*g[0] + (dvec[0]*B0[1]-dvec[1]*B0[0]);
+    }
+  }
+}
+function inBodyLocal(b,wx,wy,wz){
+  // world -> local (R^T (w - pos)) then fill-grid lookup
+  const R=b.R||rotOf(b);
+  const dx=wx-b.pos[0],dy=wy-b.pos[1],dz=wz-b.pos[2];
+  const lx=R[0]*dx+R[3]*dy+R[6]*dz;
+  const ly=R[1]*dx+R[4]*dy+R[7]*dz;
+  const lz=R[2]*dx+R[5]*dy+R[8]*dz;
+  const f=b.fill;
+  const i=Math.floor((lx-f.min[0])/f.cellX), j=Math.floor((ly-f.min[1])/f.cellY), k=Math.floor((lz-f.min[2])/f.cellZ);
+  if(i<0||j<0||k<0||i>=f.nx||j>=f.ny||k>=f.nz) return false;
+  return f.occ[(k*f.ny+j)*f.nx+i]===1;
+}
+function contacts(){
+  const tmp=[0,0,0];
+  for(let a=0;a<bodies.length;a++) for(let c=a+1;c<bodies.length;c++){
+    const A=bodies[a],B=bodies[c];
+    const freeA=A.motion.mode==='free', freeB=B.motion.mode==='free';
+    if(!freeA&&!freeB) continue;
+    const dx=B.pos[0]-A.pos[0],dy=B.pos[1]-A.pos[1],dz=B.pos[2]-A.pos[2];
+    if(Math.hypot(dx,dy,dz)>A.radius+B.radius) continue;
+    // narrow phase: A's coarse surface points inside B (and vice versa)
+    let n=[0,0,0], hits=0;
+    const RA=A.R||rotOf(A);
+    for(let i=0;i<A.nFc;i++){
+      xform(RA,A.pos,A.fcP[i*3],A.fcP[i*3+1],A.fcP[i*3+2],tmp,0);
+      if(inBodyLocal(B,tmp[0],tmp[1],tmp[2])){
+        // outward normal of A's cluster in world
+        const sx=A.fcS[i*3],sy=A.fcS[i*3+1],sz=A.fcS[i*3+2];
+        n[0]+=RA[0]*sx+RA[1]*sy+RA[2]*sz;
+        n[1]+=RA[3]*sx+RA[4]*sy+RA[5]*sz;
+        n[2]+=RA[6]*sx+RA[7]*sy+RA[8]*sz;
+        hits++;
+      }
+    }
+    if(!hits){
+      const RB=B.R||rotOf(B);
+      for(let i=0;i<B.nFc;i++){
+        xform(RB,B.pos,B.fcP[i*3],B.fcP[i*3+1],B.fcP[i*3+2],tmp,0);
+        if(inBodyLocal(A,tmp[0],tmp[1],tmp[2])){
+          const sx=B.fcS[i*3],sy=B.fcS[i*3+1],sz=B.fcS[i*3+2];
+          n[0]-=RB[0]*sx+RB[1]*sy+RB[2]*sz;
+          n[1]-=RB[3]*sx+RB[4]*sy+RB[5]*sz;
+          n[2]-=RB[6]*sx+RB[7]*sy+RB[8]*sz;
+          hits++;
+        }
+      }
+    }
+    if(!hits) continue;
+    let nl=Math.hypot(...n);
+    if(nl<1e-9){ n=[dx,dy,dz]; nl=Math.hypot(...n)||1; }
+    n=[n[0]/nl,n[1]/nl,n[2]/nl];   // points roughly from A into B
+    // kill approaching relative velocity along n (inelastic impulse)
+    const rel=(A.vel[0]-B.vel[0])*n[0]+(A.vel[1]-B.vel[1])*n[1]+(A.vel[2]-B.vel[2])*n[2];
+    if(rel>0){
+      const iA=freeA?A.invMass:0, iB=freeB?B.invMass:0;
+      const jimp=rel/(iA+iB);
+      if(freeA){A.vel[0]-=jimp*iA*n[0];A.vel[1]-=jimp*iA*n[1];A.vel[2]-=jimp*iA*n[2];}
+      if(freeB){B.vel[0]+=jimp*iB*n[0];B.vel[1]+=jimp*iB*n[1];B.vel[2]+=jimp*iB*n[2];}
+    }
+    // small separation + stick damping (magnets snap and hold)
+    const push=sceneDiag*0.0006;
+    if(freeA){A.pos[0]-=n[0]*push;A.pos[1]-=n[1]*push;A.pos[2]-=n[2]*push;
+      for(let k2=0;k2<3;k2++){A.vel[k2]*=0.7;A.omega[k2]*=0.6;}}
+    if(freeB){B.pos[0]+=n[0]*push;B.pos[1]+=n[1]*push;B.pos[2]+=n[2]*push;
+      for(let k2=0;k2<3;k2++){B.vel[k2]*=0.7;B.omega[k2]*=0.6;}}
+  }
+}
+const _dq=new THREE.Quaternion(), _ax=new THREE.Vector3();
+function step(h){
+  simTime+=h;
+  const u=SIM.u, fScale=u*u/MU0, tScale=u*u*u/MU0;
+  // kinematic poses
+  for(const b of bodies){
+    const m=b.motion, t=simTime-(b.tRef||0);
+    if(m.mode==='spin'){
+      const w=m.rpm*2*Math.PI/60;
+      _ax.set(...m.axis).normalize();
+      _dq.setFromAxisAngle(_ax, w*t);
+      b.quat.copy(_dq).multiply(b.quat0);
+      b.omega=[_ax.x*w,_ax.y*w,_ax.z*w];
+    }else if(m.mode==='osc'){
+      const al=Math.hypot(...m.axis)||1, s=Math.sin(2*Math.PI*m.hz*t);
+      const c=Math.cos(2*Math.PI*m.hz*t)*2*Math.PI*m.hz;
+      for(let k=0;k<3;k++){
+        b.pos[k]=b.pos0[k]+m.axis[k]/al*m.amp*s;
+        b.vel[k]=m.axis[k]/al*m.amp*c;
+      }
+    }else if(m.mode==='slide'){
+      for(let k=0;k<3;k++){ b.pos[k]=b.pos0[k]+m.v[k]*t; b.vel[k]=m.v[k]; }
+    }
+  }
+  buildSources();
+  softSolve(2);          // warm-started relaxation
+  eddyStep(h);
+  // forces on free bodies
+  for(let bi=0;bi<bodies.length;bi++){
+    const b=bodies[bi];
+    if(b.motion.mode!=='free') continue;
+    const F=[0,0,0],T=[0,0,0];
+    bodyForces(bi,b,F,T);
+    let Fx=F[0]*fScale, Fy=F[1]*fScale, Fz=F[2]*fScale;       // newtons
+    if(SIM.gravity) Fy-=b.mass*SIM.g;
+    const Tx=T[0]*tScale,Ty=T[1]*tScale,Tz=T[2]*tScale;       // N.m
+    b.vel[0]+=Fx*b.invMass/u*h; b.vel[1]+=Fy*b.invMass/u*h; b.vel[2]+=Fz*b.invMass/u*h;
+    b.omega[0]+=Tx*b.invI*h; b.omega[1]+=Ty*b.invI*h; b.omega[2]+=Tz*b.invI*h;
+    // mild drag for numerical sanity
+    const dr=Math.exp(-0.4*h);
+    for(let k=0;k<3;k++){ b.vel[k]*=dr; b.omega[k]*=dr; }
+    // speed caps
+    const vm=Math.hypot(...b.vel), vmax=sceneDiag*3;
+    if(vm>vmax) for(let k=0;k<3;k++) b.vel[k]*=vmax/vm;
+    const om=Math.hypot(...b.omega), omax=40;
+    if(om>omax) for(let k=0;k<3;k++) b.omega[k]*=omax/om;
+  }
+  contacts();
+  // integrate free bodies
+  for(const b of bodies){
+    if(b.motion.mode!=='free') continue;
+    for(let k=0;k<3;k++) b.pos[k]+=b.vel[k]*h;
+    const om=Math.hypot(...b.omega);
+    if(om>1e-9){
+      _ax.set(b.omega[0]/om,b.omega[1]/om,b.omega[2]/om);
+      _dq.setFromAxisAngle(_ax,om*h);
+      b.quat.premultiply(_dq).normalize();
+    }
+  }
+}
+function syncMeshes(){
+  for(const b of bodies){
+    b.mesh.position.set(...b.pos);
+    b.mesh.quaternion.copy(b.quat);
+    if(b.arrow){
+      b.arrow.position.set(...b.pos);
+      const v=arrowVec(b);
+      const l=Math.hypot(...v);
+      if(l>1e-12) b.arrow.setDirection(new THREE.Vector3(v[0]/l,v[1]/l,v[2]/l));
+    }
+  }
+}
+function arrowVec(b){
+  const mat=MATERIALS[b.material];
+  if(mat.cat==='perm'){
+    const R=b.R||rotOf(b), m=b.Mloc;
+    return [R[0]*m[0]+R[1]*m[1]+R[2]*m[2],
+            R[3]*m[0]+R[4]*m[1]+R[5]*m[2],
+            R[6]*m[0]+R[7]*m[1]+R[8]*m[2]];
+  }
+  if(b.isSoft){
+    let x=0,y=0,z=0;
+    for(let i=0;i<b.nCell;i++){x+=b.cellM[i*3]*b.cellV[i];y+=b.cellM[i*3+1]*b.cellV[i];z+=b.cellM[i*3+2]*b.cellV[i];}
+    return [x,y,z];
+  }
+  return [0,0,0];
+}
+function updateArrow(b){
+  if(b.arrow){scene.remove(b.arrow); b.arrow=null;}
+  const v=arrowVec(b), l=Math.hypot(...v);
+  if(l<1e-12) return;
+  const mat=MATERIALS[b.material];
+  b.arrow=new THREE.ArrowHelper(
+    new THREE.Vector3(v[0]/l,v[1]/l,v[2]/l), new THREE.Vector3(...b.pos),
+    b.arrowLen, mat.cat==='perm'?0xffffff:0x9ab6cc, b.arrowLen*0.25, b.arrowLen*0.12);
+  scene.add(b.arrow);
+}
+
+// ---------- field-line tracing ----------
+let tracing=false, traceQueued=false;
+function snapshotSources(){
+  return {nc:SRC.nc,nd:SRC.nd,soft:SRC.soft,
+    cP:SRC.cP.slice(),cQ:SRC.cQ.slice(),cB:SRC.cB.slice(),
+    dP:SRC.dP.slice(),dD:SRC.dD.slice(),dB:SRC.dB.slice()};
+}
+function buildTermGrid(){
+  const n=72, pad=sceneDiag*0.3;
+  let mn=[1e30,1e30,1e30],mx=[-1e30,-1e30,-1e30];
+  for(const b of bodies) for(let k=0;k<3;k++){
+    mn[k]=Math.min(mn[k],b.pos[k]-b.radius); mx[k]=Math.max(mx[k],b.pos[k]+b.radius);
+  }
+  for(let k=0;k<3;k++){mn[k]-=pad*0.05; mx[k]+=pad*0.05;}
+  const cell=Math.max(mx[0]-mn[0],mx[1]-mn[1],mx[2]-mn[2])/n;
+  const nx=Math.ceil((mx[0]-mn[0])/cell),ny=Math.ceil((mx[1]-mn[1])/cell),nz=Math.ceil((mx[2]-mn[2])/cell);
+  const grid=new Uint8Array(nx*ny*nz);
+  const tmp=[0,0,0];
+  for(const b of bodies){
+    const R=b.R||rotOf(b);
+    for(let i=0;i<b.nCl;i++){
+      xform(R,b.pos,b.clP[i*3],b.clP[i*3+1],b.clP[i*3+2],tmp,0);
+      const ci=Math.floor((tmp[0]-mn[0])/cell),cj=Math.floor((tmp[1]-mn[1])/cell),ck=Math.floor((tmp[2]-mn[2])/cell);
+      for(let a=-1;a<=1;a++)for(let bb=-1;bb<=1;bb++)for(let cc=-1;cc<=1;cc++){
+        const i2=ci+a,j2=cj+bb,k2=ck+cc;
+        if(i2>=0&&j2>=0&&k2>=0&&i2<nx&&j2<ny&&k2<nz) grid[(k2*ny+j2)*nx+i2]=1;
+      }
+    }
+  }
+  return {grid,mn,cell,nx,ny,nz};
+}
+function gatherSeeds(){
+  // per body: signed cluster charges in world; soft bodies use avg-M surface charges
+  const out=[]; const tmp=[0,0,0];
+  for(const b of bodies){
+    const mat=MATERIALS[b.material], R=b.R||rotOf(b);
+    const list=[];
+    if(mat.cat==='perm'){
+      for(let i=0;i<b.nCl;i++){
+        if(Math.abs(b.q[i])<1e-12) continue;
+        xform(R,b.pos,b.clP[i*3],b.clP[i*3+1],b.clP[i*3+2],tmp,0);
+        const sx=b.clS[i*3],sy=b.clS[i*3+1],sz=b.clS[i*3+2];
+        const sl=Math.hypot(sx,sy,sz)||1;
+        const wnx=(R[0]*sx+R[1]*sy+R[2]*sz)/sl,
+              wny=(R[3]*sx+R[4]*sy+R[5]*sz)/sl,
+              wnz=(R[6]*sx+R[7]*sy+R[8]*sz)/sl;
+        list.push({x:tmp[0],y:tmp[1],z:tmp[2],q:b.q[i],nx:wnx,ny:wny,nz:wnz});
+      }
+    }else if(b.isSoft){
+      const av=arrowVec(b); let vt=0; for(const v of b.cellV) vt+=v;
+      const mx=av[0]/vt,my=av[1]/vt,mz=av[2]/vt;
+      if(Math.hypot(mx,my,mz)>1e-6){
+        for(let i=0;i<b.nFc;i++){
+          const q=mx*b.fcS[i*3]+my*b.fcS[i*3+1]+mz*b.fcS[i*3+2];
+          if(Math.abs(q)<1e-12) continue;
+          xform(R,b.pos,b.fcP[i*3],b.fcP[i*3+1],b.fcP[i*3+2],tmp,0);
+          const sx=b.fcS[i*3],sy=b.fcS[i*3+1],sz=b.fcS[i*3+2];
+          const sl=Math.hypot(sx,sy,sz)||1;
+          list.push({x:tmp[0],y:tmp[1],z:tmp[2],q,
+            nx:(R[0]*sx+R[1]*sy+R[2]*sz)/sl,
+            ny:(R[3]*sx+R[4]*sy+R[5]*sz)/sl,
+            nz:(R[6]*sx+R[7]*sy+R[8]*sz)/sl});
+        }
+      }
+    }
+    out.push(list);
+  }
+  // drop magnetically negligible bodies
+  let gmax=0;
+  for(const l of out) for(const s of l) gmax=Math.max(gmax,Math.abs(s.q));
+  return out.map(l=>l.filter(s=>Math.abs(s.q)>gmax*1e-3));
+}
+function pickSeeds(list,sign,count){
+  const cand=list.filter(s=>sign>0?s.q>0:s.q<0);
+  if(!cand.length) return [];
+  let total=0; for(const s of cand) total+=Math.abs(s.q);
+  const out=[]; let acc=0,j=0;
+  const targets=[]; for(let k=0;k<count;k++) targets.push((k+0.5)/count*total);
+  const jit=sceneDiag/34;
+  for(const s of cand){
+    acc+=Math.abs(s.q);
+    let hits=0;
+    while(j<targets.length&&targets[j]<=acc){hits++;j++;}
+    for(let h=0;h<hits;h++){
+      if(hits===1&&h===0){out.push(s);continue;}
+      let tx=Math.random()-.5,ty=Math.random()-.5,tz=Math.random()-.5;
+      const d=tx*s.nx+ty*s.ny+tz*s.nz;
+      tx-=d*s.nx;ty-=d*s.ny;tz-=d*s.nz;
+      const tl=Math.hypot(tx,ty,tz)||1, r=jit*0.8*Math.sqrt(Math.random());
+      out.push({...s,x:s.x+tx/tl*r,y:s.y+ty/tl*r,z:s.z+tz/tl*r});
+    }
+  }
+  return out;
+}
+function traceLine(S,term,seed,dir,q){
+  const h=q.h, maxSteps=q.steps, maxR=sceneDiag*2.1, off=sceneDiag*0.006;
+  let px=seed.x+seed.nx*off, py=seed.y+seed.ny*off, pz=seed.z+seed.nz*off;
+  const pts=[px,py,pz], mags=[fieldCore(S,px,py,pz,-1,-1)];
+  const k1=[0,0,0],k2=[0,0,0],k3=[0,0,0],k4=[0,0,0];
+  const d=(x,y,z,out)=>{const m=fieldCore(S,x,y,z,-1,-1);const inv=dir/(m||1e-30);
+    out[0]=_B[0]*inv;out[1]=_B[1]*inv;out[2]=_B[2]*inv;return m;};
+  const occ=(x,y,z)=>{
+    const i=Math.floor((x-term.mn[0])/term.cell),j=Math.floor((y-term.mn[1])/term.cell),k=Math.floor((z-term.mn[2])/term.cell);
+    if(i<0||j<0||k<0||i>=term.nx||j>=term.ny||k>=term.nz) return false;
+    return term.grid[(k*term.ny+j)*term.nx+i]===1;
+  };
+  for(let s=0;s<maxSteps;s++){
+    const m=d(px,py,pz,k1);
+    if(q.rk4){
+      d(px+k1[0]*h/2,py+k1[1]*h/2,pz+k1[2]*h/2,k2);
+      d(px+k2[0]*h/2,py+k2[1]*h/2,pz+k2[2]*h/2,k3);
+      d(px+k3[0]*h,py+k3[1]*h,pz+k3[2]*h,k4);
+      px+=h/6*(k1[0]+2*k2[0]+2*k3[0]+k4[0]);
+      py+=h/6*(k1[1]+2*k2[1]+2*k3[1]+k4[1]);
+      pz+=h/6*(k1[2]+2*k2[2]+2*k3[2]+k4[2]);
+    }else{ // RK2 midpoint
+      d(px+k1[0]*h/2,py+k1[1]*h/2,pz+k1[2]*h/2,k2);
+      px+=h*k2[0]; py+=h*k2[1]; pz+=h*k2[2];
+    }
+    pts.push(px,py,pz); mags.push(m);
+    const rx=px-sceneCenter[0],ry=py-sceneCenter[1],rz=pz-sceneCenter[2];
+    if(rx*rx+ry*ry+rz*rz>maxR*maxR) break;
+    if(s>6&&occ(px,py,pz)) break;
+  }
+  return {pts,mags};
+}
+async function traceAll(fullQuality){
+  if(!bodies.length||tracing) {traceQueued=traceQueued||!tracing?traceQueued:true; return;}
+  tracing=true;
+  const btn=document.getElementById('trace'); btn.disabled=true;
+  const S=snapshotSources();
+  const term=buildTermGrid();
+  const userK=+document.getElementById('lines').value;
+  const q=fullQuality
+    ? {h:sceneDiag/320, steps:1100, rk4:true, K:userK}
+    : {h:sceneDiag/170, steps:380, rk4:false, K:Math.min(userK,48)};
+  const seedLists=gatherSeeds();
+  const jobs=[];
+  seedLists.forEach(list=>{
+    for(const s of pickSeeds(list,+1,q.K)) jobs.push({s,dir:+1});
+    for(const s of pickSeeds(list,-1,q.K)) jobs.push({s,dir:-1});
+  });
+  const results=[];
+  const chunk=fullQuality?4:10;
+  for(let i=0;i<jobs.length;i++){
+    results.push(traceLine(S,term,jobs[i].s,jobs[i].dir,q));
+    if(i%chunk===chunk-1){
+      if(fullQuality) setStatus('tracing… '+Math.round((i+1)/jobs.length*100)+' %',true);
+      await new Promise(r=>setTimeout(r,0));
+    }
+  }
+  // colour by log|B|
+  let lmin=1e30,lmax=-1e30;
+  for(const r of results) for(const m of r.mags){
+    if(m<=0)continue; const l=Math.log10(m);
+    lmin=Math.min(lmin,l); lmax=Math.max(lmax,l);
+  }
+  if(!(lmax>lmin)){lmin=0;lmax=1;}
+  const col=new THREE.Color(); const verts=[],colors=[];
+  for(const r of results){
+    const n=r.pts.length/3;
+    for(let i=0;i<n-1;i++) for(const idx of[i,i+1]){
+      verts.push(r.pts[idx*3],r.pts[idx*3+1],r.pts[idx*3+2]);
+      const t=Math.max(0,Math.min(1,(Math.log10(r.mags[idx]||1e-30)-lmin)/(lmax-lmin)));
+      col.setHSL(0.62-0.62*t,0.95,0.5+0.15*t);
+      colors.push(col.r,col.g,col.b);
+    }
+  }
+  const old=lineGroup;
+  lineGroup=new THREE.Group();
+  const geo=new THREE.BufferGeometry();
+  geo.setAttribute('position',new THREE.Float32BufferAttribute(verts,3));
+  geo.setAttribute('color',new THREE.Float32BufferAttribute(colors,3));
+  lineGroup.add(new THREE.LineSegments(geo,new THREE.LineBasicMaterial({vertexColors:true,transparent:true,opacity:0.85})));
+  scene.add(lineGroup);
+  if(old){scene.remove(old); old.traverse(o=>{o.geometry&&o.geometry.dispose();o.material&&o.material.dispose();});}
+  if(fullQuality) setStatus(results.length+' field lines');
+  btn.disabled=false;
+  tracing=false;
+}
+function requestTrace(full){ traceAll(full); }
+
+// ---------- main loop ----------
+let lastTS=0;
+function frame(ts){
+  requestAnimationFrame(frame);
+  const dtReal=Math.min(0.05,(ts-lastTS)/1000||0); lastTS=ts;
+  if(playing&&bodies.length){
+    let dt=dtReal*SIM.speed;
+    const n=Math.max(1,Math.min(4,Math.round(dt/SIM.h)));
+    const h=dt/n;
+    for(let i=0;i<n;i++) step(h);
+    syncMeshes();
+    timebar.textContent='t = '+simTime.toFixed(3)+' s  ('+SIM.speed+'\u00d7)';
+    if(document.getElementById('live').checked&&!tracing) traceAll(false);
+  }
+  renderer.render(scene,camera);
+}
+requestAnimationFrame(frame);
+
+function play(){
+  if(!bodies.length) return;
+  playing=true;
+  document.getElementById('play').innerHTML='&#10074;&#10074; Pause';
+  bodies.forEach(b=>{if(b.isEddy)b.edInit=false;});
+}
+function pause(){
+  playing=false;
+  const p=document.getElementById('play');
+  if(p) p.innerHTML='&#9654; Play';
+  if(bodies.length){ buildSources(); softSolve(10); bodies.forEach(updateArrow); syncMeshes(); requestTrace(true); }
+}
+document.getElementById('play').addEventListener('click',()=>playing?pause():play());
+document.getElementById('reset').addEventListener('click',()=>{
+  pause(); simTime=0; timebar.textContent='';
+  for(const b of bodies){
+    b.pos=[...b.homePos]; b.pos0=[...b.homePos];
+    b.quat.copy(b.homeQuat); b.quat0.copy(b.homeQuat); b.tRef=0;
+    b.vel=[0,0,0]; b.omega=[0,0,0];
+    b.cellM.fill(0); b.edD.fill(0); b.edInit=false;
+  }
+  buildSources(); softSolve(24); bodies.forEach(updateArrow); syncMeshes(); requestTrace(true);
+});
+document.getElementById('units').addEventListener('change',e=>{SIM.u=+e.target.value; refreshDerived();});
+document.getElementById('speed').addEventListener('change',e=>{SIM.speed=+e.target.value;});
+document.getElementById('gravity').addEventListener('change',e=>{SIM.gravity=e.target.checked;});
+document.getElementById('lines').addEventListener('input',e=>{
+  document.getElementById('linesVal').textContent=e.target.value;});
+document.getElementById('trace').addEventListener('click',()=>requestTrace(true));
+
+// ---------- body UI ----------
+function matOptionsHTML(sel){
+  let html='';
+  for(const [g,label] of Object.entries(MAT_GROUPS)){
+    html+='<optgroup label="'+label+'">';
+    for(const [k,m] of Object.entries(MATERIALS))
+      if(m.cat===g) html+='<option value="'+k+'"'+(k===sel?' selected':'')+'>'+m.name+'</option>';
+    html+='</optgroup>';
+  }
+  return html;
+}
+function motionOptionsHTML(sel){
+  const opts={static:'Static',free:'Free (dynamics)',spin:'Spin',osc:'Oscillate',slide:'Slide'};
+  return Object.entries(opts).map(([k,v])=>'<option value="'+k+'"'+(k===sel?' selected':'')+'>'+v+'</option>').join('');
+}
+function buildBodyUI(){
+  const host=document.getElementById('bodies');
+  host.innerHTML='';
+  document.getElementById('bodyCount').textContent='\u00b7 '+bodies.length;
+  bodies.forEach(b=>{
+    const mat=MATERIALS[b.material];
+    const card=document.createElement('div'); card.className='body-card';
+    const hex='#'+b.color.toString(16).padStart(6,'0');
+    let matCtl='';
+    if(mat.cat==='perm'){
+      matCtl='<div class="vec"><em>M dir</em>'+
+        [0,1,2].map(k=>'<input type="number" step="0.1" value="'+b.Mloc[k].toFixed(1)+'" data-k="m'+k+'" aria-label="M'+k+'">').join('')+
+        '</div><div class="vec"><em>Br (T)</em>'+
+        '<input type="number" step="0.05" value="'+b.Br+'" data-k="br">'+
+        '<button class="small" data-k="flip">flip N\u2194S</button></div>';
+    }else if(mat.cat==='soft'){
+      matCtl='<div class="mat-note">induced M \u00b7 \u03bcr '+mat.muR.toLocaleString()+' \u00b7 sat '+mat.Ms+' T'+
+        (b.isEddy?' \u00b7 eddy on':'')+'</div>';
+    }else if(mat.cat==='para'||mat.cat==='dia'){
+      matCtl='<div class="mat-note">\u03c7 '+mat.chi.toExponential(1)+
+        (b.isEddy?' \u00b7 conductive \u2192 eddy currents active':' \u00b7 negligible')+'</div>';
+    }else matCtl='<div class="mat-note">inert</div>';
+    let motCtl='';
+    const m=b.motion;
+    if(m.mode==='spin')
+      motCtl='<div class="vec"><em>axis</em>'+
+        [0,1,2].map(k=>'<input type="number" step="0.5" value="'+m.axis[k]+'" data-k="ax'+k+'">').join('')+
+        '</div><div class="vec"><em>rpm</em><input type="number" step="10" value="'+m.rpm+'" data-k="rpm"></div>';
+    else if(m.mode==='osc')
+      motCtl='<div class="vec"><em>axis</em>'+
+        [0,1,2].map(k=>'<input type="number" step="0.5" value="'+m.axis[k]+'" data-k="ax'+k+'">').join('')+
+        '</div><div class="vec"><em>amp / Hz</em>'+
+        '<input type="number" step="1" value="'+m.amp.toFixed(1)+'" data-k="amp">'+
+        '<input type="number" step="0.1" value="'+m.hz+'" data-k="hz"></div>';
+    else if(m.mode==='slide')
+      motCtl='<div class="vec"><em>vel u/s</em>'+
+        [0,1,2].map(k=>'<input type="number" step="1" value="'+m.v[k]+'" data-k="v'+k+'">').join('')+'</div>';
+    const massTxt=(b.mass<0.001?(b.mass*1000).toFixed(2)+' g':b.mass.toFixed(3)+' kg');
+    card.innerHTML=
+      '<div class="head"><span class="chip" style="background:'+hex+'"></span>'+
+      '<span class="name">'+b.name+'</span><span class="tris">'+(b.tris.length/9)+' tris \u00b7 '+massTxt+'</span></div>'+
+      '<div class="vec" style="margin-bottom:6px"><select data-k="mat">'+matOptionsHTML(b.material)+'</select></div>'+
+      matCtl+
+      '<div class="vec" style="margin-top:6px"><em>motion</em><select class="inline" data-k="mot">'+motionOptionsHTML(m.mode)+'</select></div>'+
+      motCtl;
+    card.querySelector('[data-k=mat]').addEventListener('change',e=>{
+      b.material=e.target.value;
+      const nm=MATERIALS[b.material];
+      if(nm.cat==='perm') b.Br=nm.Br;
+      b.cellM.fill(0); b.edD.fill(0); b.edInit=false;
+      refreshDerived(); allocSources(); buildSources(); softSolve(24);
+      bodies.forEach(updateArrow); buildBodyUI(); requestTrace(true);
+    });
+    card.querySelector('[data-k=mot]').addEventListener('change',e=>{
+      b.motion.mode=e.target.value;
+      b.pos0=[...b.pos]; b.quat0.copy(b.quat); b.tRef=simTime;
+      b.vel=[0,0,0]; b.omega=[0,0,0];
+      anyFree=bodies.some(x=>x.motion.mode==='free');
+      buildBodyUI();
+    });
+    card.querySelectorAll('input').forEach(inp=>{
+      inp.addEventListener('change',()=>{
+        const k=inp.dataset.k, v=+inp.value||0;
+        if(k==='br') b.Br=v;
+        else if(k[0]==='m') b.Mloc[+k[1]]=v;
+        else if(k.startsWith('ax')) b.motion.axis[+k[2]]=v;
+        else if(k==='rpm') b.motion.rpm=v;
+        else if(k==='amp') b.motion.amp=v;
+        else if(k==='hz') b.motion.hz=v;
+        else if(k[0]==='v') b.motion.v[+k[1]]=v;
+        updatePermQ(b); buildSources(); softSolve(6);
+        bodies.forEach(updateArrow); syncMeshes();
+      });
+    });
+    const flip=card.querySelector('[data-k=flip]');
+    if(flip) flip.addEventListener('click',()=>{
+      b.Mloc=b.Mloc.map(x=>-x);
+      updatePermQ(b); buildSources(); softSolve(6);
+      bodies.forEach(updateArrow); buildBodyUI(); requestTrace(true);
+    });
+    host.appendChild(card);
+  });
+}
+
+// ---------- file input ----------
+const drop=document.getElementById('drop'), fileInput=document.getElementById('file');
+drop.addEventListener('click',()=>fileInput.click());
+drop.addEventListener('dragover',e=>{e.preventDefault();drop.classList.add('over');});
+drop.addEventListener('dragleave',()=>drop.classList.remove('over'));
+drop.addEventListener('drop',e=>{
+  e.preventDefault(); drop.classList.remove('over');
+  const f=e.dataTransfer.files[0]; if(f) readFile(f);
+});
+fileInput.addEventListener('change',()=>{if(fileInput.files[0])readFile(fileInput.files[0]);});
+function readFile(f){
+  setStatus('parsing '+f.name+' \u2026',true);
+  const r=new FileReader();
+  r.onload=()=>{try{
+      const pos=parseSTL(r.result);
+      if(!pos.length) throw new Error('no triangles found');
+      loadGeometry(pos,f.name);
+    }catch(err){setStatus('parse failed: '+err.message);}};
+  r.readAsArrayBuffer(f);
+}
+
+// ---------- demos ----------
+function makeBox(cx,cy,cz,sx,sy,sz,out){
+  const h=[sx/2,sy/2,sz/2];
+  const V=(x,y,z)=>[cx+x*h[0],cy+y*h[1],cz+z*h[2]];
+  const quad=(a,b,c,d)=>{out.push(...a,...b,...c,...a,...c,...d);};
+  quad(V(1,-1,-1),V(1,1,-1),V(1,1,1),V(1,-1,1));
+  quad(V(-1,-1,-1),V(-1,-1,1),V(-1,1,1),V(-1,1,-1));
+  quad(V(-1,1,-1),V(-1,1,1),V(1,1,1),V(1,1,-1));
+  quad(V(-1,-1,-1),V(1,-1,-1),V(1,-1,1),V(-1,-1,1));
+  quad(V(-1,-1,1),V(1,-1,1),V(1,1,1),V(-1,1,1));
+  quad(V(-1,-1,-1),V(-1,1,-1),V(1,1,-1),V(1,-1,-1));
+}
+document.getElementById('demo1').addEventListener('click',()=>{
+  const arr=[]; makeBox(-22,0,0,20,10,10,arr); makeBox(22,0,0,20,10,10,arr);
+  loadGeometry(Float32Array.from(arr),'demo: snap',()=>{
+    bodies[0].Mloc=[1,0,0]; bodies[0].motion.mode='static';
+    bodies[1].Mloc=[1,0,0]; bodies[1].motion.mode='free';
+    document.getElementById('gravity').checked=false; SIM.gravity=false;
+    document.getElementById('speed').value='1'; SIM.speed=1;
+    anyFree=true;
+    setTimeout(()=>setStatus('press Play — the free magnet accelerates and snaps onto the static one'),100);
+  });
+});
+document.getElementById('demo2').addEventListener('click',()=>{
+  const arr=[]; makeBox(-18,0,0,16,8,8,arr); makeBox(16,0,0,4,26,26,arr);
+  loadGeometry(Float32Array.from(arr),'demo: rotor + iron',()=>{
+    bodies[0].Mloc=[1,0,0];
+    bodies[0].motion={mode:'spin',axis:[0,1,0],rpm:90,amp:5,hz:1,v:[0,0,0]};
+    bodies[1].material='iron'; bodies[1].motion.mode='static';
+    document.getElementById('gravity').checked=false; SIM.gravity=false;
+    document.getElementById('speed').value='1'; SIM.speed=1;
+    setTimeout(()=>setStatus('press Play — magnet spins at 90 rpm, iron plate re-magnetizes each frame'),100);
+  });
+});
+document.getElementById('demo3').addEventListener('click',()=>{
+  const arr=[]; makeBox(0,26,0,12,8,12,arr); makeBox(0,0,0,44,6,44,arr);
+  loadGeometry(Float32Array.from(arr),'demo: drop on copper',()=>{
+    bodies[0].Mloc=[0,1,0]; bodies[0].motion.mode='free';
+    bodies[1].material='copper'; bodies[1].motion.mode='static';
+    document.getElementById('gravity').checked=true; SIM.gravity=true;
+    document.getElementById('speed').value='0.25'; SIM.speed=0.25;
+    anyFree=true;
+    setTimeout(()=>setStatus('press Play — magnet falls onto copper; eddy dipoles oppose the approach (0.25\u00d7)'),100);
+  });
+});
+</script>
+</body>
+</html>
