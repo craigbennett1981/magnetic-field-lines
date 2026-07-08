@@ -82,7 +82,7 @@
   button.primary{background:var(--accent); color:#141414; border-color:var(--accent); font-weight:600; flex:1;}
   button.primary:disabled{opacity:.4; cursor:default;}
   button.small{padding:3px 8px; font-size:11px;}
-  .row{display:flex; gap:8px; align-items:center;}
+  .row{display:flex; gap:8px; align-items:center; flex-wrap:wrap;}
   input[type=number]{
     font:inherit; width:54px; background:var(--bg); color:var(--text);
     border:1px solid var(--line); border-radius:4px; padding:4px 5px;
@@ -102,6 +102,15 @@
   .chip{width:12px; height:12px; border-radius:3px; flex:none;}
   .body-card .name{font-weight:600;}
   .body-card .tris{color:var(--dim); font-size:11px; margin-left:auto;}
+  .group-toolbar{display:flex; gap:8px; align-items:center; margin-bottom:8px;}
+  .group-card{background:var(--panel2); border:1px solid var(--accent); border-radius:6px; padding:10px; margin-bottom:8px;}
+  .group-card .head{display:flex; align-items:center; gap:8px; margin-bottom:8px;}
+  .group-card .name{font-weight:600; color:var(--accent);}
+  .group-card .meta{color:var(--dim); font-size:11px; margin-left:auto;}
+  .chip-stack{display:flex; gap:2px; flex:none;}
+  .chip-stack .chip{width:9px; height:9px;}
+  .member-card{background:var(--bg); border:1px solid var(--line); border-radius:5px; padding:8px; margin-top:8px;}
+  .member-card .head{display:flex; align-items:center; gap:8px; margin-bottom:6px;}
   .vec{display:flex; gap:6px; align-items:center; margin-bottom:6px; flex-wrap:wrap;}
   .vec em{font-style:normal; color:var(--dim); font-size:11px; width:58px; flex:none;}
   #status{color:var(--dim); font-size:12px; min-height:18px;}
@@ -131,6 +140,7 @@
     <button id="demo1" class="small">demo: snap</button>
     <button id="demo2" class="small">demo: rotor + iron</button>
     <button id="demo3" class="small">demo: drop on copper</button>
+    <button id="demo4" class="small">demo: grouped pair</button>
   </div>
 
   <div class="box" id="simBox" style="display:none">
@@ -295,6 +305,7 @@ addEventListener('resize',resize); resize();
 
 // ---------- state ----------
 let bodies=[];
+let groups=[], nextGroupId=1;   // rigid groups: members move/rotate together as one body
 let sceneDiag=1, sceneCenter=[0,0,0];
 let SRC=null;            // flattened field sources (live)
 let anySoft=false, anyEddy=false, anyFree=false;
@@ -545,6 +556,11 @@ async function loadGeometry(pos, sourceName, setup){
       quat:new THREE.Quaternion(), quat0:new THREE.Quaternion(),
       vel:[0,0,0], omega:[0,0,0],
       motion:{mode:'static', axis:[0,1,0], rpm:120, amp:diag*0.1, hz:1, v:[0,0,0]},
+      // grouping: when groupId is set, this body's pose is driven entirely
+      // by that group each frame (see syncGroupMembers) and its own
+      // motion/vel/omega above are unused — localPos/localQuat are its
+      // fixed offset from the group's reference frame
+      groupId:null, localPos:[0,0,0], localQuat:new THREE.Quaternion(),
       // solved state
       cellM:new Float64Array(fill.cellV.length*3),
       edD:new Float64Array(eddy.v.length*3),
@@ -580,7 +596,7 @@ function clearAll(){
   for(const b of bodies){ if(b.mesh)scene.remove(b.mesh); if(b.arrow)scene.remove(b.arrow); }
   if(lineGroup){scene.remove(lineGroup); lineGroup=null;}
   if(gridHelper){scene.remove(gridHelper); gridHelper=null;}
-  bodies=[]; SRC=null;
+  bodies=[]; SRC=null; groups=[];
 }
 // mass, inertia, permanent charges, flags — call on material/unit change
 function refreshDerived(){
@@ -615,7 +631,25 @@ function refreshDerived(){
     }
     updatePermQ(b);
   }
-  anyFree = bodies.some(b=>b.motion.mode==='free');
+  groups.forEach(refreshGroupMassInertia);
+  anyFree = bodies.some(b=>b.groupId==null&&b.motion.mode==='free') || groups.some(g=>g.motion.mode==='free');
+}
+// combine member mass/inertia into the group's own rigid-body totals —
+// call whenever a member's mass/I could have changed (material edit) or a
+// group's membership changed
+function refreshGroupMassInertia(g){
+  const u=SIM.u;
+  let mass=0, I=0, maxReach=0;
+  for(const bi of g.members){
+    const b=bodies[bi];
+    mass+=b.mass;
+    const r2=b.localPos[0]**2+b.localPos[1]**2+b.localPos[2]**2;
+    I+=b.I+b.mass*r2*u*u;                 // parallel-axis theorem
+    maxReach=Math.max(maxReach, Math.hypot(...b.localPos)+b.radius);
+  }
+  g.mass=Math.max(1e-9,mass); g.invMass=1/g.mass;
+  g.I=Math.max(1e-12,I); g.invI=1/g.I;
+  g.radius=Math.max(1e-6,maxReach);
 }
 function updatePermQ(b){
   const mat=MATERIALS[b.material];
@@ -842,7 +876,13 @@ function contacts(){
   const tmp=[0,0,0];
   for(let a=0;a<bodies.length;a++) for(let c=a+1;c<bodies.length;c++){
     const A=bodies[a],B=bodies[c];
-    const freeA=A.motion.mode==='free', freeB=B.motion.mode==='free';
+    if(A.groupId!=null&&A.groupId===B.groupId) continue; // rigidly welded — never self-collide
+    // geometry (surface samples, radius) stays per-body below, but the
+    // actual dynamical response — mass, velocity, position — belongs to
+    // whatever is really moving: the body itself, or its group if it's
+    // welded into one (dyn() resolves that)
+    const dynA=dyn(A), dynB=dyn(B);
+    const freeA=dynA.motion.mode==='free', freeB=dynB.motion.mode==='free';
     if(!freeA&&!freeB) continue;
     const dx=B.pos[0]-A.pos[0],dy=B.pos[1]-A.pos[1],dz=B.pos[2]-A.pos[2];
     const dist=Math.hypot(dx,dy,dz), touchR=A.radius+B.radius;
@@ -888,8 +928,8 @@ function contacts(){
       if(stuck){
         // still within the sticky band even though this frame's exact
         // voxel-overlap sample missed — keep holding the resting contact
-        if(freeA){ A.vel[0]=A.vel[1]=A.vel[2]=0; A.omega[0]=A.omega[1]=A.omega[2]=0; }
-        if(freeB){ B.vel[0]=B.vel[1]=B.vel[2]=0; B.omega[0]=B.omega[1]=B.omega[2]=0; }
+        if(freeA){ dynA.vel[0]=dynA.vel[1]=dynA.vel[2]=0; dynA.omega[0]=dynA.omega[1]=dynA.omega[2]=0; }
+        if(freeB){ dynB.vel[0]=dynB.vel[1]=dynB.vel[2]=0; dynB.omega[0]=dynB.omega[1]=dynB.omega[2]=0; }
       }
       continue;
     }
@@ -906,93 +946,153 @@ function contacts(){
       if(n[0]*cx+n[1]*cy+n[2]*cz<0.3) n=[cx,cy,cz];
     }
     // kill approaching relative velocity along n (inelastic impulse)
-    const rel=(A.vel[0]-B.vel[0])*n[0]+(A.vel[1]-B.vel[1])*n[1]+(A.vel[2]-B.vel[2])*n[2];
+    const rel=(dynA.vel[0]-dynB.vel[0])*n[0]+(dynA.vel[1]-dynB.vel[1])*n[1]+(dynA.vel[2]-dynB.vel[2])*n[2];
     if(rel>0){
-      const iA=freeA?A.invMass:0, iB=freeB?B.invMass:0;
+      const iA=freeA?dynA.invMass:0, iB=freeB?dynB.invMass:0;
       const jimp=rel/(iA+iB);
-      if(freeA){A.vel[0]-=jimp*iA*n[0];A.vel[1]-=jimp*iA*n[1];A.vel[2]-=jimp*iA*n[2];}
-      if(freeB){B.vel[0]+=jimp*iB*n[0];B.vel[1]+=jimp*iB*n[1];B.vel[2]+=jimp*iB*n[2];}
+      if(freeA){dynA.vel[0]-=jimp*iA*n[0];dynA.vel[1]-=jimp*iA*n[1];dynA.vel[2]-=jimp*iA*n[2];}
+      if(freeB){dynB.vel[0]+=jimp*iB*n[0];dynB.vel[1]+=jimp*iB*n[1];dynB.vel[2]+=jimp*iB*n[2];}
     }
     // small separation + stick damping (magnets snap and hold): once
     // touching, fully arrest motion each frame rather than only bleeding
     // off 30% — the magnetic attraction re-injects velocity every step, so
     // partial damping never converges and the bodies jitter/tumble forever
     const push=sceneDiag*0.0006;
-    if(freeA){A.pos[0]-=n[0]*push;A.pos[1]-=n[1]*push;A.pos[2]-=n[2]*push;
-      A.vel[0]=A.vel[1]=A.vel[2]=0; A.omega[0]=A.omega[1]=A.omega[2]=0;}
-    if(freeB){B.pos[0]+=n[0]*push;B.pos[1]+=n[1]*push;B.pos[2]+=n[2]*push;
-      B.vel[0]=B.vel[1]=B.vel[2]=0; B.omega[0]=B.omega[1]=B.omega[2]=0;}
+    if(freeA){dynA.pos[0]-=n[0]*push;dynA.pos[1]-=n[1]*push;dynA.pos[2]-=n[2]*push;
+      dynA.vel[0]=dynA.vel[1]=dynA.vel[2]=0; dynA.omega[0]=dynA.omega[1]=dynA.omega[2]=0;}
+    if(freeB){dynB.pos[0]+=n[0]*push;dynB.pos[1]+=n[1]*push;dynB.pos[2]+=n[2]*push;
+      dynB.vel[0]=dynB.vel[1]=dynB.vel[2]=0; dynB.omega[0]=dynB.omega[1]=dynB.omega[2]=0;}
     A._stuckWith=B; B._stuckWith=A;
   }
 }
 const _dq=new THREE.Quaternion(), _ax=new THREE.Vector3();
+// groups: a group is itself pose/motion state shaped just like a body
+// (pos, quat, vel, omega, motion, mass, I, radius) — kinematicUpdate/
+// integrateFree/integratePose below work on either a body or a group
+// interchangeably. A grouped body has no independent motion of its own:
+// each step its world pose is re-derived from its group's pose plus its
+// fixed local offset (syncGroupMembers), which is what makes every member
+// move and rotate together as a single rigid object.
+function groupOf(b){ return b.groupId==null?null:groups.find(g=>g.id===b.groupId)||null; }
+function dyn(b){ return groupOf(b)||b; }
+function kinematicUpdate(e,t){
+  const m=e.motion, tt=t-(e.tRef||0);
+  if(m.mode==='spin'){
+    const w=m.rpm*2*Math.PI/60;
+    _ax.set(...m.axis).normalize();
+    _dq.setFromAxisAngle(_ax, w*tt);
+    e.quat.copy(_dq).multiply(e.quat0);
+    e.omega=[_ax.x*w,_ax.y*w,_ax.z*w];
+  }else if(m.mode==='osc'){
+    const al=Math.hypot(...m.axis)||1, s=Math.sin(2*Math.PI*m.hz*tt);
+    const c=Math.cos(2*Math.PI*m.hz*tt)*2*Math.PI*m.hz;
+    for(let k=0;k<3;k++){
+      e.pos[k]=e.pos0[k]+m.axis[k]/al*m.amp*s;
+      e.vel[k]=m.axis[k]/al*m.amp*c;
+    }
+  }else if(m.mode==='slide'){
+    for(let k=0;k<3;k++){ e.pos[k]=e.pos0[k]+m.v[k]*tt; e.vel[k]=m.v[k]; }
+  }
+}
+// push a group's pose out to its members' own b.pos/b.quat (world = group
+// pose + each member's fixed local offset) — everything else in the app
+// (buildSources, contacts' narrow phase, bodyForces, rendering) reads
+// per-body pos/quat directly and stays unaware groups exist at all
+function syncGroupMembers(g){
+  const R=rotOf(g); g.R=R;
+  for(const bi of g.members){
+    const b=bodies[bi];
+    xform(R,g.pos,b.localPos[0],b.localPos[1],b.localPos[2],b.pos,0);
+    b.quat.copy(g.quat).multiply(b.localQuat);
+    b.vel=[...g.vel]; b.omega=[...g.omega];
+  }
+}
+function nearAnyOther(pos,radius,excludeBi){
+  for(let i=0;i<bodies.length;i++){
+    if(excludeBi.has(i)) continue;
+    const o=bodies[i];
+    const ddx=o.pos[0]-pos[0],ddy=o.pos[1]-pos[1],ddz=o.pos[2]-pos[2];
+    if(Math.hypot(ddx,ddy,ddz)<(radius+o.radius)*1.4) return true;
+  }
+  return false;
+}
+function integrateFree(e,F,T,h,fScale,tScale,u,nearOther){
+  let Fx=F[0]*fScale, Fy=F[1]*fScale, Fz=F[2]*fScale;       // newtons
+  if(SIM.gravity) Fy-=e.mass*SIM.g;
+  const Tx=T[0]*tScale,Ty=T[1]*tScale,Tz=T[2]*tScale;       // N.m
+  e.vel[0]+=Fx*e.invMass/u*h; e.vel[1]+=Fy*e.invMass/u*h; e.vel[2]+=Fz*e.invMass/u*h;
+  e.omega[0]+=Tx*e.invI*h; e.omega[1]+=Ty*e.invI*h; e.omega[2]+=Tz*e.invI*h;
+  // mild drag for numerical sanity; much stronger once another body is
+  // close, since near-contact magnetic torque/force is huge and would
+  // otherwise reload the just-zeroed contact velocity into a runaway
+  // spin/jitter within a single free (non-contacting) step
+  const dr=Math.exp((nearOther?-6:-0.4)*h), drOm=Math.exp((nearOther?-10:-0.4)*h);
+  for(let k=0;k<3;k++){ e.vel[k]*=dr; e.omega[k]*=drOm; }
+  // speed caps
+  const vm=Math.hypot(...e.vel), vmax=sceneDiag*3;
+  if(vm>vmax) for(let k=0;k<3;k++) e.vel[k]*=vmax/vm;
+  const om=Math.hypot(...e.omega), omax=nearOther?4:40;
+  if(om>omax) for(let k=0;k<3;k++) e.omega[k]*=omax/om;
+}
+function integratePose(e,h){
+  for(let k=0;k<3;k++) e.pos[k]+=e.vel[k]*h;
+  const om=Math.hypot(...e.omega);
+  if(om>1e-9){
+    _ax.set(e.omega[0]/om,e.omega[1]/om,e.omega[2]/om);
+    _dq.setFromAxisAngle(_ax,om*h);
+    e.quat.premultiply(_dq).normalize();
+  }
+}
 function step(h){
   simTime+=h;
   const u=SIM.u, fScale=u*u/MU0, tScale=u*u*u/MU0;
-  // kinematic poses
-  for(const b of bodies){
-    const m=b.motion, t=simTime-(b.tRef||0);
-    if(m.mode==='spin'){
-      const w=m.rpm*2*Math.PI/60;
-      _ax.set(...m.axis).normalize();
-      _dq.setFromAxisAngle(_ax, w*t);
-      b.quat.copy(_dq).multiply(b.quat0);
-      b.omega=[_ax.x*w,_ax.y*w,_ax.z*w];
-    }else if(m.mode==='osc'){
-      const al=Math.hypot(...m.axis)||1, s=Math.sin(2*Math.PI*m.hz*t);
-      const c=Math.cos(2*Math.PI*m.hz*t)*2*Math.PI*m.hz;
-      for(let k=0;k<3;k++){
-        b.pos[k]=b.pos0[k]+m.axis[k]/al*m.amp*s;
-        b.vel[k]=m.axis[k]/al*m.amp*c;
-      }
-    }else if(m.mode==='slide'){
-      for(let k=0;k<3;k++){ b.pos[k]=b.pos0[k]+m.v[k]*t; b.vel[k]=m.v[k]; }
-    }
-  }
+  // kinematic poses: a standalone body drives itself; a grouped body is
+  // driven by its group instead (propagated below), which is what makes
+  // the whole group move/rotate as a single rigid object
+  for(const b of bodies){ if(b.groupId==null) kinematicUpdate(b,simTime); }
+  for(const g of groups) kinematicUpdate(g,simTime);
+  for(const g of groups) syncGroupMembers(g);
+
   buildSources();
   softSolve(2);          // warm-started relaxation
   eddyStep(h);
-  // forces on free bodies
+
+  // forces: standalone free bodies integrate directly; a free GROUP sums
+  // every member's force/torque (each re-based from the member's own
+  // center to the group's center via the standard lever-arm/parallel-axis
+  // transfer) and integrates once as a single rigid body — a magnet pulling
+  // on just one member of a welded assembly ends up moving all of it
   for(let bi=0;bi<bodies.length;bi++){
     const b=bodies[bi];
-    if(b.motion.mode!=='free') continue;
+    if(b.groupId!=null||b.motion.mode!=='free') continue;
     const F=[0,0,0],T=[0,0,0];
     bodyForces(bi,b,F,T);
-    let Fx=F[0]*fScale, Fy=F[1]*fScale, Fz=F[2]*fScale;       // newtons
-    if(SIM.gravity) Fy-=b.mass*SIM.g;
-    const Tx=T[0]*tScale,Ty=T[1]*tScale,Tz=T[2]*tScale;       // N.m
-    b.vel[0]+=Fx*b.invMass/u*h; b.vel[1]+=Fy*b.invMass/u*h; b.vel[2]+=Fz*b.invMass/u*h;
-    b.omega[0]+=Tx*b.invI*h; b.omega[1]+=Ty*b.invI*h; b.omega[2]+=Tz*b.invI*h;
-    // mild drag for numerical sanity; much stronger once another body is
-    // close, since near-contact magnetic torque/force is huge and would
-    // otherwise reload the just-zeroed contact velocity into a runaway
-    // spin/jitter within a single free (non-contacting) step
-    let nearOther=false;
-    for(const o of bodies){
-      if(o===b) continue;
-      const ddx=o.pos[0]-b.pos[0],ddy=o.pos[1]-b.pos[1],ddz=o.pos[2]-b.pos[2];
-      if(Math.hypot(ddx,ddy,ddz)<(b.radius+o.radius)*1.4){ nearOther=true; break; }
-    }
-    const dr=Math.exp((nearOther?-6:-0.4)*h), drOm=Math.exp((nearOther?-10:-0.4)*h);
-    for(let k=0;k<3;k++){ b.vel[k]*=dr; b.omega[k]*=drOm; }
-    // speed caps
-    const vm=Math.hypot(...b.vel), vmax=sceneDiag*3;
-    if(vm>vmax) for(let k=0;k<3;k++) b.vel[k]*=vmax/vm;
-    const om=Math.hypot(...b.omega), omax=nearOther?4:40;
-    if(om>omax) for(let k=0;k<3;k++) b.omega[k]*=omax/om;
+    integrateFree(b,F,T,h,fScale,tScale,u,nearAnyOther(b.pos,b.radius,new Set([bi])));
   }
+  for(const g of groups){
+    if(g.motion.mode!=='free') continue;
+    const F=[0,0,0],T=[0,0,0];
+    for(const bi of g.members){
+      const b=bodies[bi];
+      const Fm=[0,0,0],Tm=[0,0,0];
+      bodyForces(bi,b,Fm,Tm);
+      F[0]+=Fm[0]; F[1]+=Fm[1]; F[2]+=Fm[2];
+      const rx=b.pos[0]-g.pos[0],ry=b.pos[1]-g.pos[1],rz=b.pos[2]-g.pos[2];
+      T[0]+=Tm[0]+ry*Fm[2]-rz*Fm[1];
+      T[1]+=Tm[1]+rz*Fm[0]-rx*Fm[2];
+      T[2]+=Tm[2]+rx*Fm[1]-ry*Fm[0];
+    }
+    integrateFree(g,F,T,h,fScale,tScale,u,nearAnyOther(g.pos,g.radius,new Set(g.members)));
+  }
+
   contacts();
-  // integrate free bodies
-  for(const b of bodies){
-    if(b.motion.mode!=='free') continue;
-    for(let k=0;k<3;k++) b.pos[k]+=b.vel[k]*h;
-    const om=Math.hypot(...b.omega);
-    if(om>1e-9){
-      _ax.set(b.omega[0]/om,b.omega[1]/om,b.omega[2]/om);
-      _dq.setFromAxisAngle(_ax,om*h);
-      b.quat.premultiply(_dq).normalize();
-    }
-  }
+
+  // integrate position: standalone free bodies, then free groups — then
+  // push every group's (possibly contacts()-corrected) pose back out to
+  // its members so rendering/next-frame physics see the final result
+  for(const b of bodies){ if(b.groupId==null&&b.motion.mode==='free') integratePose(b,h); }
+  for(const g of groups){ if(g.motion.mode==='free') integratePose(g,h); }
+  for(const g of groups) syncGroupMembers(g);
 }
 function syncMeshes(){
   for(const b of bodies){
@@ -1307,6 +1407,15 @@ document.getElementById('reset').addEventListener('click',()=>{
     b.vel=[0,0,0]; b.omega=[0,0,0]; b._stuckWith=null;
     b.cellM.fill(0); b.edD.fill(0); b.edInit=false;
   }
+  // groups reset their own pose too, then overwrite members' pos/quat from
+  // above with the group-derived ones — a grouped body's individual
+  // homePos would otherwise break its fixed offset within the group
+  for(const g of groups){
+    g.pos=[...g.homePos]; g.pos0=[...g.homePos];
+    g.quat.copy(g.homeQuat); g.quat0.copy(g.homeQuat); g.tRef=0;
+    g.vel=[0,0,0]; g.omega=[0,0,0]; g._stuckWith=null;
+    syncGroupMembers(g);
+  }
   buildSources(); softSolve(24); bodies.forEach(updateArrow); syncMeshes(); requestTrace(true);
 });
 document.getElementById('units').addEventListener('change',e=>{SIM.u=+e.target.value; refreshDerived();});
@@ -1331,88 +1440,219 @@ function motionOptionsHTML(sel){
   const opts={static:'Static',free:'Free (dynamics)',spin:'Spin',osc:'Oscillate',slide:'Slide'};
   return Object.entries(opts).map(([k,v])=>'<option value="'+k+'"'+(k===sel?' selected':'')+'>'+v+'</option>').join('');
 }
+
+// ---------- groups: rigidly weld several bodies so they move as one ----------
+function createGroup(memberIdxs){
+  if(memberIdxs.length<2) return;
+  let totalMass=0, cx=0,cy=0,cz=0;
+  for(const bi of memberIdxs){
+    const b=bodies[bi];
+    totalMass+=b.mass; cx+=b.pos[0]*b.mass; cy+=b.pos[1]*b.mass; cz+=b.pos[2]*b.mass;
+  }
+  if(!(totalMass>0)){
+    totalMass=memberIdxs.length; cx=cy=cz=0;
+    for(const bi of memberIdxs){ const b=bodies[bi]; cx+=b.pos[0]; cy+=b.pos[1]; cz+=b.pos[2]; }
+  }
+  const pos=[cx/totalMass, cy/totalMass, cz/totalMass];
+  const g={
+    id: nextGroupId++,
+    members: [...memberIdxs],
+    motion:{mode:'static', axis:[0,1,0], rpm:120, amp:sceneDiag*0.1, hz:1, v:[0,0,0]},
+    pos, pos0:[...pos], quat:new THREE.Quaternion(), quat0:new THREE.Quaternion(), tRef:simTime,
+    homePos:[...pos], homeQuat:new THREE.Quaternion(),
+    vel:[0,0,0], omega:[0,0,0],
+    mass:1, invMass:1, I:1, invI:1, radius:1,
+    _stuckWith:null
+  };
+  g.name='Group '+g.id;
+  // group's own frame starts axis-aligned with world, so each member's
+  // local offset is simply its current world offset from the group center
+  for(const bi of memberIdxs){
+    const b=bodies[bi];
+    b.groupId=g.id;
+    b.localPos=[b.pos[0]-pos[0], b.pos[1]-pos[1], b.pos[2]-pos[2]];
+    b.localQuat=b.quat.clone();
+    b.vel=[0,0,0]; b.omega=[0,0,0]; b._stuckWith=null;
+  }
+  groups.push(g);
+  refreshGroupMassInertia(g);
+  anyFree = bodies.some(x=>x.groupId==null&&x.motion.mode==='free') || groups.some(x=>x.motion.mode==='free');
+  buildBodyUI();
+}
+function ungroupBodies(g){
+  for(const bi of g.members){
+    const b=bodies[bi];
+    b.groupId=null;
+    b.pos0=[...b.pos]; b.quat0.copy(b.quat); b.tRef=simTime;
+    b.vel=[0,0,0]; b.omega=[0,0,0]; b._stuckWith=null;
+    b.motion={mode:'static', axis:[0,1,0], rpm:120, amp:sceneDiag*0.1, hz:1, v:[0,0,0]};
+  }
+  groups=groups.filter(x=>x!==g);
+  anyFree = bodies.some(x=>x.groupId==null&&x.motion.mode==='free') || groups.some(x=>x.motion.mode==='free');
+  buildBodyUI();
+}
+// material controls: reused both for a standalone body's own card and for
+// each member's nested card inside a group (magnetization stays per-body
+// even when grouped \u2014 only motion is shared)
+function materialBlockHTML(b){
+  const mat=MATERIALS[b.material];
+  let matCtl='';
+  if(mat.cat==='perm'){
+    matCtl='<div class="vec"><em>M dir</em>'+
+      [0,1,2].map(k=>'<input type="number" step="0.1" value="'+b.Mloc[k].toFixed(1)+'" data-k="m'+k+'" aria-label="M'+k+'">').join('')+
+      '</div><div class="vec"><em>Br (T)</em>'+
+      '<input type="number" step="0.05" value="'+b.Br+'" data-k="br">'+
+      '<button class="small" data-k="flip">flip N\u2194S</button></div>';
+  }else if(mat.cat==='soft'){
+    matCtl='<div class="mat-note">induced M \u00b7 \u03bcr '+mat.muR.toLocaleString()+' \u00b7 sat '+mat.Ms+' T'+
+      (b.isEddy?' \u00b7 eddy on':'')+'</div>';
+  }else if(mat.cat==='para'||mat.cat==='dia'){
+    matCtl='<div class="mat-note">\u03c7 '+mat.chi.toExponential(1)+
+      (b.isEddy?' \u00b7 conductive \u2192 eddy currents active':' \u00b7 negligible')+'</div>';
+  }else matCtl='<div class="mat-note">inert</div>';
+  return '<div class="vec" style="margin-bottom:6px"><select data-k="mat">'+matOptionsHTML(b.material)+'</select></div>'+matCtl;
+}
+function bindMaterialBlock(container,b){
+  container.querySelector('[data-k=mat]').addEventListener('change',e=>{
+    b.material=e.target.value;
+    const nm=MATERIALS[b.material];
+    if(nm.cat==='perm') b.Br=nm.Br;
+    b.cellM.fill(0); b.edD.fill(0); b.edInit=false;
+    refreshDerived(); allocSources(); buildSources(); softSolve(24);
+    bodies.forEach(updateArrow); buildBodyUI(); requestTrace(true);
+  });
+  container.querySelectorAll('input[type=number]').forEach(inp=>{
+    inp.addEventListener('change',()=>{
+      const k=inp.dataset.k, v=+inp.value||0;
+      if(k==='br') b.Br=v;
+      else if(k==='m0'||k==='m1'||k==='m2') b.Mloc[+k[1]]=v;
+      updatePermQ(b); buildSources(); softSolve(6);
+      bodies.forEach(updateArrow); syncMeshes();
+    });
+  });
+  const flip=container.querySelector('[data-k=flip]');
+  if(flip) flip.addEventListener('click',()=>{
+    b.Mloc=b.Mloc.map(x=>-x);
+    updatePermQ(b); buildSources(); softSolve(6);
+    bodies.forEach(updateArrow); buildBodyUI(); requestTrace(true);
+  });
+}
+// motion controls: reused for a standalone body's own motion, or a group's
+// shared motion \u2014 the caller supplies which `motion` object to bind to and
+// what to do when the mode itself changes (each needs different reference
+// bookkeeping: a lone body resets its own pos0/quat0, a group resets its own)
+function motionBlockHTML(m){
+  let motCtl='';
+  if(m.mode==='spin')
+    motCtl='<div class="vec"><em>axis</em>'+
+      [0,1,2].map(k=>'<input type="number" step="0.5" value="'+m.axis[k]+'" data-k="ax'+k+'">').join('')+
+      '</div><div class="vec"><em>rpm</em><input type="number" step="10" value="'+m.rpm+'" data-k="rpm"></div>';
+  else if(m.mode==='osc')
+    motCtl='<div class="vec"><em>axis</em>'+
+      [0,1,2].map(k=>'<input type="number" step="0.5" value="'+m.axis[k]+'" data-k="ax'+k+'">').join('')+
+      '</div><div class="vec"><em>amp / Hz</em>'+
+      '<input type="number" step="1" value="'+m.amp.toFixed(1)+'" data-k="amp">'+
+      '<input type="number" step="0.1" value="'+m.hz+'" data-k="hz"></div>';
+  else if(m.mode==='slide')
+    motCtl='<div class="vec"><em>vel u/s</em>'+
+      [0,1,2].map(k=>'<input type="number" step="1" value="'+m.v[k]+'" data-k="v'+k+'">').join('')+'</div>';
+  return '<div class="vec" style="margin-top:6px"><em>motion</em><select class="inline" data-k="mot">'+motionOptionsHTML(m.mode)+'</select></div>'+motCtl;
+}
+function bindMotionBlock(container,motion,onModeChange){
+  container.querySelector('[data-k=mot]').addEventListener('change',e=>{
+    motion.mode=e.target.value;
+    onModeChange();
+  });
+  container.querySelectorAll('input[type=number]').forEach(inp=>{
+    inp.addEventListener('change',()=>{
+      const k=inp.dataset.k, v=+inp.value||0;
+      if(k.startsWith('ax')) motion.axis[+k[2]]=v;
+      else if(k==='rpm') motion.rpm=v;
+      else if(k==='amp') motion.amp=v;
+      else if(k==='hz') motion.hz=v;
+      else if(k[0]==='v') motion.v[+k[1]]=v;
+      buildSources(); bodies.forEach(updateArrow); syncMeshes();
+    });
+  });
+}
+function buildStandaloneCard(b,bi){
+  const card=document.createElement('div'); card.className='body-card';
+  const hex='#'+b.color.toString(16).padStart(6,'0');
+  const massTxt=(b.mass<0.001?(b.mass*1000).toFixed(2)+' g':b.mass.toFixed(3)+' kg');
+  const head=document.createElement('div'); head.className='head';
+  head.innerHTML='<input type="checkbox" class="body-select" data-bi="'+bi+'" title="select for grouping">'+
+    '<span class="chip" style="background:'+hex+'"></span>'+
+    '<span class="name">'+b.name+'</span><span class="tris">'+(b.tris.length/9)+' tris \u00b7 '+massTxt+'</span>';
+  const matDiv=document.createElement('div'); matDiv.innerHTML=materialBlockHTML(b);
+  const motDiv=document.createElement('div'); motDiv.innerHTML=motionBlockHTML(b.motion);
+  card.appendChild(head); card.appendChild(matDiv); card.appendChild(motDiv);
+  bindMaterialBlock(matDiv,b);
+  bindMotionBlock(motDiv,b.motion,()=>{
+    b.pos0=[...b.pos]; b.quat0.copy(b.quat); b.tRef=simTime;
+    b.vel=[0,0,0]; b.omega=[0,0,0];
+    anyFree=bodies.some(x=>x.groupId==null&&x.motion.mode==='free')||groups.some(x=>x.motion.mode==='free');
+    buildBodyUI();
+  });
+  return card;
+}
+function buildGroupCard(g){
+  const card=document.createElement('div'); card.className='group-card';
+  const head=document.createElement('div'); head.className='head';
+  const chips=g.members.map(bi=>'<span class="chip" style="background:#'+bodies[bi].color.toString(16).padStart(6,'0')+'"></span>').join('');
+  const massTxt=(g.mass<0.001?(g.mass*1000).toFixed(2)+' g':g.mass.toFixed(3)+' kg');
+  head.innerHTML='<span class="chip-stack">'+chips+'</span>'+
+    '<span class="name">'+g.name+'</span>'+
+    '<span class="meta">'+g.members.length+' bodies \u00b7 '+massTxt+'</span>'+
+    '<button class="small" data-k="ungroup">Ungroup</button>';
+  const motDiv=document.createElement('div'); motDiv.innerHTML=motionBlockHTML(g.motion);
+  card.appendChild(head); card.appendChild(motDiv);
+  bindMotionBlock(motDiv,g.motion,()=>{
+    g.pos0=[...g.pos]; g.quat0.copy(g.quat); g.tRef=simTime;
+    g.vel=[0,0,0]; g.omega=[0,0,0];
+    anyFree=bodies.some(x=>x.groupId==null&&x.motion.mode==='free')||groups.some(x=>x.motion.mode==='free');
+    buildBodyUI();
+  });
+  head.querySelector('[data-k=ungroup]').addEventListener('click',()=>ungroupBodies(g));
+  for(const bi of g.members){
+    const b=bodies[bi];
+    const mCard=document.createElement('div'); mCard.className='member-card';
+    const mHead=document.createElement('div'); mHead.className='head';
+    mHead.innerHTML='<span class="chip" style="background:#'+b.color.toString(16).padStart(6,'0')+'"></span>'+
+      '<span class="name">'+b.name+'</span><span class="tris">'+(b.tris.length/9)+' tris</span>';
+    const matDiv=document.createElement('div'); matDiv.innerHTML=materialBlockHTML(b);
+    mCard.appendChild(mHead); mCard.appendChild(matDiv);
+    bindMaterialBlock(matDiv,b);
+    card.appendChild(mCard);
+  }
+  return card;
+}
 function buildBodyUI(){
   const host=document.getElementById('bodies');
   host.innerHTML='';
   document.getElementById('bodyCount').textContent='\u00b7 '+bodies.length;
-  bodies.forEach(b=>{
-    const mat=MATERIALS[b.material];
-    const card=document.createElement('div'); card.className='body-card';
-    const hex='#'+b.color.toString(16).padStart(6,'0');
-    let matCtl='';
-    if(mat.cat==='perm'){
-      matCtl='<div class="vec"><em>M dir</em>'+
-        [0,1,2].map(k=>'<input type="number" step="0.1" value="'+b.Mloc[k].toFixed(1)+'" data-k="m'+k+'" aria-label="M'+k+'">').join('')+
-        '</div><div class="vec"><em>Br (T)</em>'+
-        '<input type="number" step="0.05" value="'+b.Br+'" data-k="br">'+
-        '<button class="small" data-k="flip">flip N\u2194S</button></div>';
-    }else if(mat.cat==='soft'){
-      matCtl='<div class="mat-note">induced M \u00b7 \u03bcr '+mat.muR.toLocaleString()+' \u00b7 sat '+mat.Ms+' T'+
-        (b.isEddy?' \u00b7 eddy on':'')+'</div>';
-    }else if(mat.cat==='para'||mat.cat==='dia'){
-      matCtl='<div class="mat-note">\u03c7 '+mat.chi.toExponential(1)+
-        (b.isEddy?' \u00b7 conductive \u2192 eddy currents active':' \u00b7 negligible')+'</div>';
-    }else matCtl='<div class="mat-note">inert</div>';
-    let motCtl='';
-    const m=b.motion;
-    if(m.mode==='spin')
-      motCtl='<div class="vec"><em>axis</em>'+
-        [0,1,2].map(k=>'<input type="number" step="0.5" value="'+m.axis[k]+'" data-k="ax'+k+'">').join('')+
-        '</div><div class="vec"><em>rpm</em><input type="number" step="10" value="'+m.rpm+'" data-k="rpm"></div>';
-    else if(m.mode==='osc')
-      motCtl='<div class="vec"><em>axis</em>'+
-        [0,1,2].map(k=>'<input type="number" step="0.5" value="'+m.axis[k]+'" data-k="ax'+k+'">').join('')+
-        '</div><div class="vec"><em>amp / Hz</em>'+
-        '<input type="number" step="1" value="'+m.amp.toFixed(1)+'" data-k="amp">'+
-        '<input type="number" step="0.1" value="'+m.hz+'" data-k="hz"></div>';
-    else if(m.mode==='slide')
-      motCtl='<div class="vec"><em>vel u/s</em>'+
-        [0,1,2].map(k=>'<input type="number" step="1" value="'+m.v[k]+'" data-k="v'+k+'">').join('')+'</div>';
-    const massTxt=(b.mass<0.001?(b.mass*1000).toFixed(2)+' g':b.mass.toFixed(3)+' kg');
-    card.innerHTML=
-      '<div class="head"><span class="chip" style="background:'+hex+'"></span>'+
-      '<span class="name">'+b.name+'</span><span class="tris">'+(b.tris.length/9)+' tris \u00b7 '+massTxt+'</span></div>'+
-      '<div class="vec" style="margin-bottom:6px"><select data-k="mat">'+matOptionsHTML(b.material)+'</select></div>'+
-      matCtl+
-      '<div class="vec" style="margin-top:6px"><em>motion</em><select class="inline" data-k="mot">'+motionOptionsHTML(m.mode)+'</select></div>'+
-      motCtl;
-    card.querySelector('[data-k=mat]').addEventListener('change',e=>{
-      b.material=e.target.value;
-      const nm=MATERIALS[b.material];
-      if(nm.cat==='perm') b.Br=nm.Br;
-      b.cellM.fill(0); b.edD.fill(0); b.edInit=false;
-      refreshDerived(); allocSources(); buildSources(); softSolve(24);
-      bodies.forEach(updateArrow); buildBodyUI(); requestTrace(true);
+
+  let groupBtn=null;
+  if(bodies.length>1){
+    const toolbar=document.createElement('div'); toolbar.className='group-toolbar';
+    groupBtn=document.createElement('button'); groupBtn.className='small'; groupBtn.textContent='Group selected'; groupBtn.disabled=true;
+    groupBtn.title='Check 2+ bodies below, then group them to move/rotate as one';
+    groupBtn.addEventListener('click',()=>{
+      const sel=[...host.querySelectorAll('.body-select:checked')].map(el=>+el.dataset.bi);
+      if(sel.length>=2) createGroup(sel);
     });
-    card.querySelector('[data-k=mot]').addEventListener('change',e=>{
-      b.motion.mode=e.target.value;
-      b.pos0=[...b.pos]; b.quat0.copy(b.quat); b.tRef=simTime;
-      b.vel=[0,0,0]; b.omega=[0,0,0];
-      anyFree=bodies.some(x=>x.motion.mode==='free');
-      buildBodyUI();
-    });
-    card.querySelectorAll('input').forEach(inp=>{
-      inp.addEventListener('change',()=>{
-        const k=inp.dataset.k, v=+inp.value||0;
-        if(k==='br') b.Br=v;
-        else if(k[0]==='m') b.Mloc[+k[1]]=v;
-        else if(k.startsWith('ax')) b.motion.axis[+k[2]]=v;
-        else if(k==='rpm') b.motion.rpm=v;
-        else if(k==='amp') b.motion.amp=v;
-        else if(k==='hz') b.motion.hz=v;
-        else if(k[0]==='v') b.motion.v[+k[1]]=v;
-        updatePermQ(b); buildSources(); softSolve(6);
-        bodies.forEach(updateArrow); syncMeshes();
-      });
-    });
-    const flip=card.querySelector('[data-k=flip]');
-    if(flip) flip.addEventListener('click',()=>{
-      b.Mloc=b.Mloc.map(x=>-x);
-      updatePermQ(b); buildSources(); softSolve(6);
-      bodies.forEach(updateArrow); buildBodyUI(); requestTrace(true);
-    });
-    host.appendChild(card);
-  });
+    toolbar.appendChild(groupBtn);
+    host.appendChild(toolbar);
+  }
+
+  const inGroup=new Set();
+  groups.forEach(g=>{ host.appendChild(buildGroupCard(g)); g.members.forEach(bi=>inGroup.add(bi)); });
+  bodies.forEach((b,bi)=>{ if(!inGroup.has(bi)) host.appendChild(buildStandaloneCard(b,bi)); });
+
+  if(groupBtn){
+    const selects=host.querySelectorAll('.body-select');
+    const updateGroupBtn=()=>{ groupBtn.disabled=host.querySelectorAll('.body-select:checked').length<2; };
+    selects.forEach(cb=>cb.addEventListener('change',updateGroupBtn));
+  }
 }
 
 // ---------- file input ----------
@@ -1479,6 +1719,23 @@ document.getElementById('demo3').addEventListener('click',()=>{
     document.getElementById('speed').value='0.25'; SIM.speed=0.25;
     anyFree=true;
     setTimeout(()=>setStatus('press Play — magnet falls onto copper; eddy dipoles oppose the approach (0.25\u00d7)'),100);
+  });
+});
+document.getElementById('demo4').addEventListener('click',()=>{
+  const arr=[];
+  makeBox(-30,0,0,20,10,10,arr);   // static target magnet
+  makeBox(20,7,0,10,8,8,arr);      // welded pair, member A
+  makeBox(20,-7,0,10,8,8,arr);     // welded pair, member B
+  loadGeometry(Float32Array.from(arr),'demo: grouped pair',()=>{
+    bodies[0].Mloc=[1,0,0]; bodies[0].motion.mode='static';
+    bodies[1].Mloc=[1,0,0];
+    bodies[2].Mloc=[1,0,0];
+    createGroup([1,2]);
+    groups[0].motion.mode='free';
+    document.getElementById('gravity').checked=false; SIM.gravity=false;
+    document.getElementById('speed').value='1'; SIM.speed=1;
+    anyFree=true;
+    setTimeout(()=>setStatus('press Play — the welded magnet pair moves and rotates together as one, then snaps onto the static magnet'),100);
   });
 });
 </script>

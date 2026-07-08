@@ -56,6 +56,12 @@ A few things worth knowing:
 - **Speed** (dropdown in the Simulation panel) scales simulated time relative to real time — slow it down (e.g. `0.05×`) to see fast eddy-current braking or a snap in slow motion, or speed it up for a slow drift.
 - **Reset** puts every body back at its original loaded position/orientation and zeroes all velocity and induced magnetization — it does not change any body's material or motion mode.
 
+## Grouping bodies
+
+Multiple bodies can be welded together into one rigid assembly that moves and rotates as a single object — useful when an STL models several parts (e.g. two magnets bolted to a bracket) that should never move independently of each other.
+
+To group bodies: check the selection box on 2 or more body cards in the **Bodies** panel, then click **Group selected**. The group gets one shared **motion** control (the same five modes as an individual body) in place of each member's own — magnetic force on any one member moves the whole assembly together, and collisions are resolved against the group's combined mass, not the individual part. Each member keeps its own material and magnetization controls, since those are still physically per-part. Click **Ungroup** to dissolve the assembly; members freeze in place as independent `Static` bodies from wherever they were at that instant.
+
 ## Demos
 
-If you just want to see it working, use the three **demo** buttons in the sidebar (procedurally generated geometry, no STL needed) — they cover a magnet snapping onto another magnet, a spinning magnet re-magnetizing an iron plate, and a magnet dropping onto a conductive (eddy-current) plate.
+If you just want to see it working, use the **demo** buttons in the sidebar (procedurally generated geometry, no STL needed) — they cover a magnet snapping onto another magnet, a spinning magnet re-magnetizing an iron plate, a magnet dropping onto a conductive (eddy-current) plate, and a welded pair of magnets moving and rotating together as one group as it snaps onto a third magnet.
