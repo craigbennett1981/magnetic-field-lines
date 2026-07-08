@@ -34,7 +34,27 @@ STL files have no embedded unit — the simulator assumes your file's numbers ar
 
 ### Assigning materials
 
-Material (permanent magnet grade, soft magnetic, paramagnetic, diamagnetic, or non-magnetic/plastic) and initial magnetization direction are **not** part of the STL — every body defaults to NdFeB N42 on import and is configured afterwards in the **Bodies** panel, including motion behavior (static, free/dynamic, spinning, oscillating, sliding).
+Material (permanent magnet grade, soft magnetic, paramagnetic, diamagnetic, or non-magnetic/plastic) and initial magnetization direction are **not** part of the STL — every body defaults to NdFeB N42 on import and is configured afterwards in the **Bodies** panel.
+
+## Controlling motion
+
+Like material, how a body moves is **not** part of the STL — it's set per body afterwards, via the **motion** dropdown on that body's card. Every body starts as `Static` on import. There are five modes:
+
+| Mode | Behaviour |
+|---|---|
+| **Static** | Fixed in place. Still generates a field and exerts force/torque on other bodies, but never moves itself. Use it for anchors — the plate a magnet snaps onto, the iron core a rotor spins near, etc. |
+| **Free (dynamics)** | Full rigid-body physics: magnetic force and torque from every other body, optional gravity, mass/inertia derived from the body's material density and volume, and collision response (impact + "stick" contact) against other bodies. This is the only mode where a body can accelerate, fall, snap, or bounce on its own. |
+| **Spin** | Rotates at a constant rate about an axis you set (as an x/y/z direction — it's normalized automatically, so `0,1,0` and `0,2,0` behave the same), at a given **rpm**. Purely kinematic: the rotation follows the formula exactly regardless of any force acting on it. |
+| **Oscillate** | Moves back and forth sinusoidally along an axis, with an **amplitude** (in the model's own units) and a **frequency** in Hz. Also kinematic. |
+| **Slide** | Moves at a constant linear velocity (x/y/z, units per second). Also kinematic. |
+
+A few things worth knowing:
+
+- **Kinematic vs. dynamic**: Spin, Oscillate, and Slide *drive* a body's position directly from a formula of time — they ignore incoming magnetic force, so nothing can knock a spinning rotor off its axis. Only `Free` bodies are actually pushed around by the simulation. A typical scene pairs one `Static` or kinematic body (the thing being acted on — an iron plate, a conductor) with one `Free` body (the magnet doing the acting).
+- **Switching modes mid-simulation** takes the body's *current* position and orientation as the new reference — e.g. switching a body to `Oscillate` makes it oscillate around wherever it happens to be at that moment, not its original load position, and switching to `Spin` spins it in place from its current orientation. Velocity and angular velocity are reset to zero on the switch.
+- **Gravity** (checkbox in the Simulation panel) only affects `Free` bodies; kinematic and static bodies are unaffected.
+- **Speed** (dropdown in the Simulation panel) scales simulated time relative to real time — slow it down (e.g. `0.05×`) to see fast eddy-current braking or a snap in slow motion, or speed it up for a slow drift.
+- **Reset** puts every body back at its original loaded position/orientation and zeroes all velocity and induced magnetization — it does not change any body's material or motion mode.
 
 ## Demos
 
