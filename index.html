@@ -1057,7 +1057,7 @@ function gatherSeeds(){
         xform(R,b.pos,tris[i+3],tris[i+4],tris[i+5],Bv,0);
         xform(R,b.pos,tris[i+6],tris[i+7],tris[i+8],C,0);
         list.push({ax:A[0],ay:A[1],az:A[2],bx:Bv[0],by:Bv[1],bz:Bv[2],cx:C[0],cy:C[1],cz:C[2],
-          nx:nx/area,ny:ny/area,nz:nz/area,q});
+          nx:nx/area,ny:ny/area,nz:nz/area,q,idx:i});
       }
     }
     out.push(list);
@@ -1066,6 +1066,14 @@ function gatherSeeds(){
   let gmax=0;
   for(const l of out) for(const s of l) gmax=Math.max(gmax,Math.abs(s.q));
   return out.map(l=>l.filter(s=>Math.abs(s.q)>gmax*1e-3));
+}
+// deterministic pseudo-random in [0,1) — used instead of Math.random() for
+// seed placement so that retracing an unchanged (settled) body reproduces
+// the exact same seed points instead of the field lines visibly wiggling
+// on every "live lines" retrace even though nothing is actually moving
+function hashRand(seed){
+  const x=Math.sin(seed*12.9898)*43758.5453;
+  return x-Math.floor(x);
 }
 function pickSeeds(list,sign,count){
   const cand=list.filter(s=>sign>0?s.q>0:s.q<0);
@@ -1078,8 +1086,8 @@ function pickSeeds(list,sign,count){
     let hits=0;
     while(j<targets.length&&targets[j]<=acc){hits++;j++;}
     for(let h=0;h<hits;h++){
-      // uniform random point on the source triangle (area-weighted barycentric sample)
-      let r1=Math.random(), r2=Math.random();
+      // uniform point on the source triangle (area-weighted barycentric sample)
+      let r1=hashRand(s.idx*7.31+h*3.17+1.1), r2=hashRand(s.idx*7.31+h*3.17+5.9);
       if(r1+r2>1){ r1=1-r1; r2=1-r2; }
       const x=s.ax+r1*(s.bx-s.ax)+r2*(s.cx-s.ax);
       const y=s.ay+r1*(s.by-s.ay)+r2*(s.cy-s.ay);
