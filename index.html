@@ -960,42 +960,44 @@ function buildTermGrid(){
   return {grid,mn,cell,nx,ny,nz};
 }
 function gatherSeeds(){
-  // per body: signed cluster charges in world; soft bodies use avg-M surface charges
-  const out=[]; const tmp=[0,0,0];
+  // per body: per-TRIANGLE surface charge (M.n*area) in world space, so seed
+  // points can be drawn from anywhere on the real pole face — not just from
+  // the coarse force/charge cluster centroids (those collapse a whole face
+  // to a handful of points on low-poly meshes, making lines erupt from a
+  // couple of spots instead of the object's actual surface).
+  const out=[]; const A=[0,0,0],Bv=[0,0,0],C=[0,0,0];
   for(const b of bodies){
     const mat=MATERIALS[b.material], R=b.R||rotOf(b);
     const list=[];
+    let mx=0,my=0,mz=0;
     if(mat.cat==='perm'){
-      for(let i=0;i<b.nCl;i++){
-        if(Math.abs(b.q[i])<1e-12) continue;
-        xform(R,b.pos,b.clP[i*3],b.clP[i*3+1],b.clP[i*3+2],tmp,0);
-        const sx=b.clS[i*3],sy=b.clS[i*3+1],sz=b.clS[i*3+2];
-        const sl=Math.hypot(sx,sy,sz)||1;
-        const wnx=(R[0]*sx+R[1]*sy+R[2]*sz)/sl,
-              wny=(R[3]*sx+R[4]*sy+R[5]*sz)/sl,
-              wnz=(R[6]*sx+R[7]*sy+R[8]*sz)/sl;
-        list.push({x:tmp[0],y:tmp[1],z:tmp[2],q:b.q[i],nx:wnx,ny:wny,nz:wnz});
-      }
+      const ml=Math.hypot(...b.Mloc)||1;
+      mx=b.Mloc[0]/ml*b.Br; my=b.Mloc[1]/ml*b.Br; mz=b.Mloc[2]/ml*b.Br;
     }else if(b.isSoft){
       const av=arrowVec(b); let vt=0; for(const v of b.cellV) vt+=v;
-      const mx=av[0]/vt,my=av[1]/vt,mz=av[2]/vt;
-      if(Math.hypot(mx,my,mz)>1e-6){
-        for(let i=0;i<b.nFc;i++){
-          const q=mx*b.fcS[i*3]+my*b.fcS[i*3+1]+mz*b.fcS[i*3+2];
-          if(Math.abs(q)<1e-12) continue;
-          xform(R,b.pos,b.fcP[i*3],b.fcP[i*3+1],b.fcP[i*3+2],tmp,0);
-          const sx=b.fcS[i*3],sy=b.fcS[i*3+1],sz=b.fcS[i*3+2];
-          const sl=Math.hypot(sx,sy,sz)||1;
-          list.push({x:tmp[0],y:tmp[1],z:tmp[2],q,
-            nx:(R[0]*sx+R[1]*sy+R[2]*sz)/sl,
-            ny:(R[3]*sx+R[4]*sy+R[5]*sz)/sl,
-            nz:(R[6]*sx+R[7]*sy+R[8]*sz)/sl});
-        }
+      if(vt>0){ mx=av[0]/vt; my=av[1]/vt; mz=av[2]/vt; }
+      if(Math.hypot(mx,my,mz)<=1e-6){ mx=my=mz=0; }
+    }
+    if(mx||my||mz){
+      const tris=b.tris;
+      for(let i=0;i<tris.length;i+=9){
+        const e1x=tris[i+3]-tris[i],e1y=tris[i+4]-tris[i+1],e1z=tris[i+5]-tris[i+2];
+        const e2x=tris[i+6]-tris[i],e2y=tris[i+7]-tris[i+1],e2z=tris[i+8]-tris[i+2];
+        const nx=(e1y*e2z-e1z*e2y)*.5, ny=(e1z*e2x-e1x*e2z)*.5, nz=(e1x*e2y-e1y*e2x)*.5;
+        const area=Math.hypot(nx,ny,nz);
+        if(area<1e-14) continue;
+        const q=mx*nx+my*ny+mz*nz;             // = M.nhat * area (rotation-invariant)
+        if(Math.abs(q)<1e-14) continue;
+        xform(R,b.pos,tris[i],tris[i+1],tris[i+2],A,0);
+        xform(R,b.pos,tris[i+3],tris[i+4],tris[i+5],Bv,0);
+        xform(R,b.pos,tris[i+6],tris[i+7],tris[i+8],C,0);
+        list.push({ax:A[0],ay:A[1],az:A[2],bx:Bv[0],by:Bv[1],bz:Bv[2],cx:C[0],cy:C[1],cz:C[2],
+          nx:nx/area,ny:ny/area,nz:nz/area,q});
       }
     }
     out.push(list);
   }
-  // drop magnetically negligible bodies
+  // drop magnetically negligible triangles
   let gmax=0;
   for(const l of out) for(const s of l) gmax=Math.max(gmax,Math.abs(s.q));
   return out.map(l=>l.filter(s=>Math.abs(s.q)>gmax*1e-3));
@@ -1006,18 +1008,18 @@ function pickSeeds(list,sign,count){
   let total=0; for(const s of cand) total+=Math.abs(s.q);
   const out=[]; let acc=0,j=0;
   const targets=[]; for(let k=0;k<count;k++) targets.push((k+0.5)/count*total);
-  const jit=sceneDiag/34;
   for(const s of cand){
     acc+=Math.abs(s.q);
     let hits=0;
     while(j<targets.length&&targets[j]<=acc){hits++;j++;}
     for(let h=0;h<hits;h++){
-      if(hits===1&&h===0){out.push(s);continue;}
-      let tx=Math.random()-.5,ty=Math.random()-.5,tz=Math.random()-.5;
-      const d=tx*s.nx+ty*s.ny+tz*s.nz;
-      tx-=d*s.nx;ty-=d*s.ny;tz-=d*s.nz;
-      const tl=Math.hypot(tx,ty,tz)||1, r=jit*0.8*Math.sqrt(Math.random());
-      out.push({...s,x:s.x+tx/tl*r,y:s.y+ty/tl*r,z:s.z+tz/tl*r});
+      // uniform random point on the source triangle (area-weighted barycentric sample)
+      let r1=Math.random(), r2=Math.random();
+      if(r1+r2>1){ r1=1-r1; r2=1-r2; }
+      const x=s.ax+r1*(s.bx-s.ax)+r2*(s.cx-s.ax);
+      const y=s.ay+r1*(s.by-s.ay)+r2*(s.cy-s.ay);
+      const z=s.az+r1*(s.bz-s.az)+r2*(s.cz-s.az);
+      out.push({x,y,z,q:s.q,nx:s.nx,ny:s.ny,nz:s.nz});
     }
   }
   return out;
