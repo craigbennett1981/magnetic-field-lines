@@ -1009,28 +1009,36 @@ function buildTermGrid(){
   for(let k=0;k<3;k++){mn[k]-=pad*0.05; mx[k]+=pad*0.05;}
   const cell=Math.max(mx[0]-mn[0],mx[1]-mn[1],mx[2]-mn[2])/n;
   const nx=Math.ceil((mx[0]-mn[0])/cell),ny=Math.ceil((mx[1]-mn[1])/cell),nz=Math.ceil((mx[2]-mn[2])/cell);
-  const grid=new Uint8Array(nx*ny*nz);
+  // per-cell BITMASK of which bodies' dilated surface covers it (not just a
+  // plain boolean) — so a line can tell "this is a different, nearby body's
+  // surface" (always a valid, immediate termination) apart from "this is
+  // just my own launch body's halo" (only a termination once clear of it).
+  // Without that distinction, closing the gap-in-coverage bug (below) forces
+  // a wide self-exclusion halo that, for two near-touching bodies, swallows
+  // the OTHER body too — lines then punch straight through it instead of
+  // stopping at its surface, which reads as a kinked/discontinuous line.
+  const grid=new Uint32Array(nx*ny*nz);
   const tmp=[0,0,0];
   // dilate each marked cell out to at least half the charge-cluster
   // spacing, so a line passing between two adjacent surface samples still
   // registers as "at the surface" instead of slipping through the gap and
   // drifting on without ever finding a proper termination
   const dilate=Math.max(1,Math.ceil((sceneDiag/34)*0.6/cell));
-  for(const b of bodies){
-    const R=b.R||rotOf(b);
+  bodies.forEach((b,bi)=>{
+    const R=b.R||rotOf(b), bit=1<<bi;
     for(let i=0;i<b.nCl;i++){
       xform(R,b.pos,b.clP[i*3],b.clP[i*3+1],b.clP[i*3+2],tmp,0);
       const ci=Math.floor((tmp[0]-mn[0])/cell),cj=Math.floor((tmp[1]-mn[1])/cell),ck=Math.floor((tmp[2]-mn[2])/cell);
       for(let a=-dilate;a<=dilate;a++)for(let bb=-dilate;bb<=dilate;bb++)for(let cc=-dilate;cc<=dilate;cc++){
         const i2=ci+a,j2=cj+bb,k2=ck+cc;
-        if(i2>=0&&j2>=0&&k2>=0&&i2<nx&&j2<ny&&k2<nz) grid[(k2*ny+j2)*nx+i2]=1;
+        if(i2>=0&&j2>=0&&k2>=0&&i2<nx&&j2<ny&&k2<nz) grid[(k2*ny+j2)*nx+i2]|=bit;
       }
     }
-  }
+  });
   // how far the dilation can reach from an exact marked point — a seed's
-  // own start needs to clear this before termination checks apply, or it
-  // would immediately (or after a couple of steps) look "at the surface"
-  // again and cut the line short right where it began
+  // own start needs to clear this before its OWN body's halo counts as a
+  // termination, or it would immediately (or after a couple of steps) look
+  // "at the surface" again and cut the line short right where it began
   const margin=dilate*cell*1.8;
   return {grid,mn,cell,nx,ny,nz,margin};
 }
@@ -1107,24 +1115,28 @@ function pickSeeds(list,sign,count){
   }
   return out;
 }
-function traceLine(S,term,seed,dir,q){
+function traceLine(S,term,seed,dir,q,bi){
   const h=q.h, maxSteps=q.steps, maxR=sceneDiag*2.1, off=sceneDiag*0.006;
   let px=seed.x+seed.nx*off, py=seed.y+seed.ny*off, pz=seed.z+seed.nz*off;
   const sx0=px, sy0=py, sz0=pz;
   // the seed starts inside (or right next to) the termination grid's own
-  // dilated halo around its source surface, so termination checks must
-  // stay off until the line has actually traveled clear of that halo —
-  // a fixed step count doesn't scale with the halo size and can cut the
-  // line short right where it began
+  // dilated halo around its source surface, so termination checks against
+  // its OWN launch body must stay off until the line has actually traveled
+  // clear of that halo — a fixed step count doesn't scale with the halo
+  // size and can cut the line short right where it began. A hit on any
+  // OTHER body, though, is always a real termination — even immediately —
+  // otherwise a nearby second body (e.g. two snapped magnets) gets punched
+  // straight through instead of stopping the line at its surface.
   const escapeDist=(term.margin||0)+off;
+  const ownBit=(bi>=0&&bi<32)?(1<<bi):0;
   const pts=[px,py,pz], mags=[fieldCore(S,px,py,pz,-1,-1)];
   const k1=[0,0,0],k2=[0,0,0],k3=[0,0,0],k4=[0,0,0];
   const d=(x,y,z,out)=>{const m=fieldCore(S,x,y,z,-1,-1);const inv=dir/(m||1e-30);
     out[0]=_B[0]*inv;out[1]=_B[1]*inv;out[2]=_B[2]*inv;return m;};
-  const occ=(x,y,z)=>{
+  const occMask=(x,y,z)=>{
     const i=Math.floor((x-term.mn[0])/term.cell),j=Math.floor((y-term.mn[1])/term.cell),k=Math.floor((z-term.mn[2])/term.cell);
-    if(i<0||j<0||k<0||i>=term.nx||j>=term.ny||k>=term.nz) return false;
-    return term.grid[(k*term.ny+j)*term.nx+i]===1;
+    if(i<0||j<0||k<0||i>=term.nx||j>=term.ny||k>=term.nz) return 0;
+    return term.grid[(k*term.ny+j)*term.nx+i];
   };
   for(let s=0;s<maxSteps;s++){
     const m=d(px,py,pz,k1);
@@ -1143,8 +1155,12 @@ function traceLine(S,term,seed,dir,q){
     const rx=px-sceneCenter[0],ry=py-sceneCenter[1],rz=pz-sceneCenter[2];
     if(rx*rx+ry*ry+rz*rz>maxR*maxR) break;
     if(s>2){
-      const dxs=px-sx0,dys=py-sy0,dzs=pz-sz0;
-      if(dxs*dxs+dys*dys+dzs*dzs>escapeDist*escapeDist&&occ(px,py,pz)) break;
+      const mask=occMask(px,py,pz);
+      if(mask&~ownBit) break;          // reached a different body — terminate now
+      if(mask&ownBit){                 // back at my own launch surface —
+        const dxs=px-sx0,dys=py-sy0,dzs=pz-sz0;
+        if(dxs*dxs+dys*dys+dzs*dzs>escapeDist*escapeDist) break;
+      }
     }
   }
   return {pts,mags};
@@ -1166,19 +1182,22 @@ async function traceAll(fullQuality){
     : {h:sceneDiag/170, steps:900, rk4:false, K:Math.min(userK,48)};
   const seedLists=gatherSeeds();
   const jobs=[];
-  seedLists.forEach(list=>{
-    for(const s of pickSeeds(list,+1,q.K)) jobs.push({s,dir:+1});
-    for(const s of pickSeeds(list,-1,q.K)) jobs.push({s,dir:-1});
+  seedLists.forEach((list,bi)=>{
+    for(const s of pickSeeds(list,+1,q.K)) jobs.push({s,dir:+1,bi});
+    for(const s of pickSeeds(list,-1,q.K)) jobs.push({s,dir:-1,bi});
   });
+  // run the whole batch synchronously — no setTimeout(0)-based yielding.
+  // Yielding mid-trace here used to let a "live" retrace interleave with
+  // the animation's own requestAnimationFrame loop, but while playing that
+  // combination could starve the pending timeout indefinitely (the trace
+  // would sit at "tracing" forever, never publishing new lines, so the
+  // displayed field lines went stale relative to the — by then already
+  // moved/settled — bodies). The whole batch only takes on the order of a
+  // few hundred ms to ~1s even at full quality, so blocking briefly instead
+  // of risking a hang is the right trade.
+  if(fullQuality) setStatus('tracing…',true);
   const results=[];
-  const chunk=fullQuality?4:10;
-  for(let i=0;i<jobs.length;i++){
-    results.push(traceLine(S,term,jobs[i].s,jobs[i].dir,q));
-    if(i%chunk===chunk-1){
-      if(fullQuality) setStatus('tracing… '+Math.round((i+1)/jobs.length*100)+' %',true);
-      await new Promise(r=>setTimeout(r,0));
-    }
-  }
+  for(let i=0;i<jobs.length;i++) results.push(traceLine(S,term,jobs[i].s,jobs[i].dir,q,jobs[i].bi));
   // colour by log|B|
   let lmin=1e30,lmax=-1e30;
   for(const r of results) for(const m of r.mags){
