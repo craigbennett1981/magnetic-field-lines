@@ -341,16 +341,40 @@ function areaCentroid(tris){
 }
 function clusterTris(tris,cell){
   const cells=new Map();
+  const addSample=(px,py,pz,area,nx,ny,nz)=>{
+    const k=Math.floor(px/cell)+','+Math.floor(py/cell)+','+Math.floor(pz/cell);
+    let c=cells.get(k);
+    if(!c){c={x:0,y:0,z:0,w:0,sx:0,sy:0,sz:0}; cells.set(k,c);}
+    c.x+=px*area;c.y+=py*area;c.z+=pz*area;c.w+=area;c.sx+=nx;c.sy+=ny;c.sz+=nz;
+  };
   for(let i=0;i<tris.length;i+=9){
     const ax=tris[i],ay=tris[i+1],az=tris[i+2],bx=tris[i+3],by=tris[i+4],bz=tris[i+5],cx=tris[i+6],cy=tris[i+7],cz=tris[i+8];
     const e1x=bx-ax,e1y=by-ay,e1z=bz-az,e2x=cx-ax,e2y=cy-ay,e2z=cz-az;
     const nx=(e1y*e2z-e1z*e2y)*.5, ny=(e1z*e2x-e1x*e2z)*.5, nz=(e1x*e2y-e1y*e2x)*.5;
     const A=Math.hypot(nx,ny,nz); if(A<1e-14) continue;
-    const px=(ax+bx+cx)/3, py=(ay+by+cy)/3, pz=(az+bz+cz)/3;
-    const k=Math.floor(px/cell)+','+Math.floor(py/cell)+','+Math.floor(pz/cell);
-    let c=cells.get(k);
-    if(!c){c={x:0,y:0,z:0,w:0,sx:0,sy:0,sz:0}; cells.set(k,c);}
-    c.x+=px*A;c.y+=py*A;c.z+=pz*A;c.w+=A;c.sx+=nx;c.sy+=ny;c.sz+=nz;
+    // subdivide triangles that are large relative to the cluster cell —
+    // otherwise a coarsely-tessellated flat face (e.g. a box face built
+    // from just 2 big triangles) collapses to one or two point charges,
+    // which makes a single uniform pole face look like several separate
+    // poles once you're close enough to see the discrete source blobs
+    const e3x=cx-bx,e3y=cy-by,e3z=cz-bz;
+    const maxEdge=Math.max(Math.hypot(e1x,e1y,e1z),Math.hypot(e2x,e2y,e2z),Math.hypot(e3x,e3y,e3z));
+    const ns=Math.min(24,Math.max(1,Math.ceil(maxEdge/cell)));
+    if(ns===1){
+      addSample((ax+bx+cx)/3,(ay+by+cy)/3,(az+bz+cz)/3,A,nx,ny,nz);
+      continue;
+    }
+    const subA=A/(ns*ns), snx=nx/(ns*ns), sny=ny/(ns*ns), snz=nz/(ns*ns);
+    for(let row=0;row<ns;row++){
+      for(let col=0;col<ns-row;col++){
+        let s=(3*row+1)/(3*ns), t=(3*col+1)/(3*ns);
+        addSample(ax+s*e1x+t*e2x, ay+s*e1y+t*e2y, az+s*e1z+t*e2z, subA,snx,sny,snz);
+        if(row+col<ns-1){
+          s=(3*row+2)/(3*ns); t=(3*col+2)/(3*ns);
+          addSample(ax+s*e1x+t*e2x, ay+s*e1y+t*e2y, az+s*e1z+t*e2z, subA,snx,sny,snz);
+        }
+      }
+    }
   }
   const n=cells.size, pos=new Float64Array(n*3), S=new Float64Array(n*3);
   let j=0;
