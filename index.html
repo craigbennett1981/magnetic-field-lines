@@ -782,7 +782,18 @@ function contacts(){
     const freeA=A.motion.mode==='free', freeB=B.motion.mode==='free';
     if(!freeA&&!freeB) continue;
     const dx=B.pos[0]-A.pos[0],dy=B.pos[1]-A.pos[1],dz=B.pos[2]-A.pos[2];
-    if(Math.hypot(dx,dy,dz)>A.radius+B.radius) continue;
+    const dist=Math.hypot(dx,dy,dz), touchR=A.radius+B.radius;
+    const stuck=A._stuckWith===B;
+    // sticky band: once a resting contact has been established, keep it
+    // held through a slightly wider radius than the exact touching distance
+    // so a one-frame gap from the separation "push" below doesn't let the
+    // strong close-range magnetic force/torque re-launch it before the next
+    // narrow-phase check confirms contact again (that gap is what caused
+    // the endless jitter/tumble instead of a clean, held snap)
+    if(dist>touchR*(stuck?1.15:1)){
+      if(stuck){ A._stuckWith=null; B._stuckWith=null; }
+      continue;
+    }
     // narrow phase: A's coarse surface points inside B (and vice versa)
     let n=[0,0,0], hits=0;
     const RA=A.R||rotOf(A);
@@ -810,10 +821,27 @@ function contacts(){
         }
       }
     }
-    if(!hits) continue;
+    if(!hits){
+      if(stuck){
+        // still within the sticky band even though this frame's exact
+        // voxel-overlap sample missed — keep holding the resting contact
+        if(freeA){ A.vel[0]=A.vel[1]=A.vel[2]=0; A.omega[0]=A.omega[1]=A.omega[2]=0; }
+        if(freeB){ B.vel[0]=B.vel[1]=B.vel[2]=0; B.omega[0]=B.omega[1]=B.omega[2]=0; }
+      }
+      continue;
+    }
     let nl=Math.hypot(...n);
     if(nl<1e-9){ n=[dx,dy,dz]; nl=Math.hypot(...n)||1; }
     n=[n[0]/nl,n[1]/nl,n[2]/nl];   // points roughly from A into B
+    // for flush/face contact the handful of sample hits can yield a noisy,
+    // off-axis normal; when it disagrees with the center-to-center line
+    // (the only stable reference for two attracting bodies), fall back to
+    // that line instead of letting a skewed normal inject spurious torque
+    const cl=Math.hypot(dx,dy,dz);
+    if(cl>1e-9){
+      const cx=dx/cl,cy=dy/cl,cz=dz/cl;
+      if(n[0]*cx+n[1]*cy+n[2]*cz<0.3) n=[cx,cy,cz];
+    }
     // kill approaching relative velocity along n (inelastic impulse)
     const rel=(A.vel[0]-B.vel[0])*n[0]+(A.vel[1]-B.vel[1])*n[1]+(A.vel[2]-B.vel[2])*n[2];
     if(rel>0){
@@ -822,12 +850,16 @@ function contacts(){
       if(freeA){A.vel[0]-=jimp*iA*n[0];A.vel[1]-=jimp*iA*n[1];A.vel[2]-=jimp*iA*n[2];}
       if(freeB){B.vel[0]+=jimp*iB*n[0];B.vel[1]+=jimp*iB*n[1];B.vel[2]+=jimp*iB*n[2];}
     }
-    // small separation + stick damping (magnets snap and hold)
+    // small separation + stick damping (magnets snap and hold): once
+    // touching, fully arrest motion each frame rather than only bleeding
+    // off 30% — the magnetic attraction re-injects velocity every step, so
+    // partial damping never converges and the bodies jitter/tumble forever
     const push=sceneDiag*0.0006;
     if(freeA){A.pos[0]-=n[0]*push;A.pos[1]-=n[1]*push;A.pos[2]-=n[2]*push;
-      for(let k2=0;k2<3;k2++){A.vel[k2]*=0.7;A.omega[k2]*=0.6;}}
+      A.vel[0]=A.vel[1]=A.vel[2]=0; A.omega[0]=A.omega[1]=A.omega[2]=0;}
     if(freeB){B.pos[0]+=n[0]*push;B.pos[1]+=n[1]*push;B.pos[2]+=n[2]*push;
-      for(let k2=0;k2<3;k2++){B.vel[k2]*=0.7;B.omega[k2]*=0.6;}}
+      B.vel[0]=B.vel[1]=B.vel[2]=0; B.omega[0]=B.omega[1]=B.omega[2]=0;}
+    A._stuckWith=B; B._stuckWith=A;
   }
 }
 const _dq=new THREE.Quaternion(), _ax=new THREE.Vector3();
@@ -868,13 +900,22 @@ function step(h){
     const Tx=T[0]*tScale,Ty=T[1]*tScale,Tz=T[2]*tScale;       // N.m
     b.vel[0]+=Fx*b.invMass/u*h; b.vel[1]+=Fy*b.invMass/u*h; b.vel[2]+=Fz*b.invMass/u*h;
     b.omega[0]+=Tx*b.invI*h; b.omega[1]+=Ty*b.invI*h; b.omega[2]+=Tz*b.invI*h;
-    // mild drag for numerical sanity
-    const dr=Math.exp(-0.4*h);
-    for(let k=0;k<3;k++){ b.vel[k]*=dr; b.omega[k]*=dr; }
+    // mild drag for numerical sanity; much stronger once another body is
+    // close, since near-contact magnetic torque/force is huge and would
+    // otherwise reload the just-zeroed contact velocity into a runaway
+    // spin/jitter within a single free (non-contacting) step
+    let nearOther=false;
+    for(const o of bodies){
+      if(o===b) continue;
+      const ddx=o.pos[0]-b.pos[0],ddy=o.pos[1]-b.pos[1],ddz=o.pos[2]-b.pos[2];
+      if(Math.hypot(ddx,ddy,ddz)<(b.radius+o.radius)*1.4){ nearOther=true; break; }
+    }
+    const dr=Math.exp((nearOther?-6:-0.4)*h), drOm=Math.exp((nearOther?-10:-0.4)*h);
+    for(let k=0;k<3;k++){ b.vel[k]*=dr; b.omega[k]*=drOm; }
     // speed caps
     const vm=Math.hypot(...b.vel), vmax=sceneDiag*3;
     if(vm>vmax) for(let k=0;k<3;k++) b.vel[k]*=vmax/vm;
-    const om=Math.hypot(...b.omega), omax=40;
+    const om=Math.hypot(...b.omega), omax=nearOther?4:40;
     if(om>omax) for(let k=0;k<3;k++) b.omega[k]*=omax/om;
   }
   contacts();
@@ -1148,7 +1189,7 @@ document.getElementById('reset').addEventListener('click',()=>{
   for(const b of bodies){
     b.pos=[...b.homePos]; b.pos0=[...b.homePos];
     b.quat.copy(b.homeQuat); b.quat0.copy(b.homeQuat); b.tRef=0;
-    b.vel=[0,0,0]; b.omega=[0,0,0];
+    b.vel=[0,0,0]; b.omega=[0,0,0]; b._stuckWith=null;
     b.cellM.fill(0); b.edD.fill(0); b.edInit=false;
   }
   buildSources(); softSolve(24); bodies.forEach(updateArrow); syncMeshes(); requestTrace(true);
