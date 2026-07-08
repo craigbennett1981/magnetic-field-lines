@@ -64,4 +64,4 @@ To group bodies: check the selection box on 2 or more body cards in the **Bodies
 
 ## Demos
 
-If you just want to see it working, use the **demo** buttons in the sidebar (procedurally generated geometry, no STL needed) — they cover a magnet snapping onto another magnet, a spinning magnet re-magnetizing an iron plate, a magnet dropping onto a conductive (eddy-current) plate, and a welded pair of magnets moving and rotating together as one group as it snaps onto a third magnet.
+If you just want to see it working, use the **demo** buttons in the sidebar (procedurally generated geometry, no STL needed) — they cover a magnet snapping onto another magnet, a spinning magnet re-magnetizing an iron plate, a magnet dropping onto a conductive (eddy-current) plate, and a simplified brushless motor: a 2-piece rotor welded into one group with `Spin` motion, re-magnetizing an iron stator core as it turns.
