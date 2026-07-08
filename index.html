@@ -98,6 +98,7 @@
   input[type=checkbox]{accent-color:var(--accent);}
   .mat-note{color:var(--dim); font-size:11px; margin-top:2px;}
   .body-card{background:var(--panel2); border:1px solid var(--line); border-radius:6px; padding:10px; margin-bottom:8px;}
+  .body-card.selected{border-color:var(--accent);}
   .body-card .head{display:flex; align-items:center; gap:8px; margin-bottom:8px;}
   .chip{width:12px; height:12px; border-radius:3px; flex:none;}
   .body-card .name{font-weight:600;}
@@ -1575,6 +1576,11 @@ function bindMotionBlock(container,motion,onModeChange){
     });
   });
 }
+// glow a body's mesh in the 3D view while it's checked for grouping, so
+// it's obvious which objects are about to be welded together
+function setBodyHighlight(b,on){
+  b.mesh.material.emissive.setHex(on?0xe8a33d:0x000000);
+}
 function buildStandaloneCard(b,bi){
   const card=document.createElement('div'); card.className='body-card';
   const hex='#'+b.color.toString(16).padStart(6,'0');
@@ -1592,6 +1598,10 @@ function buildStandaloneCard(b,bi){
     b.vel=[0,0,0]; b.omega=[0,0,0];
     anyFree=bodies.some(x=>x.groupId==null&&x.motion.mode==='free')||groups.some(x=>x.motion.mode==='free');
     buildBodyUI();
+  });
+  head.querySelector('.body-select').addEventListener('change',e=>{
+    setBodyHighlight(b,e.target.checked);
+    card.classList.toggle('selected',e.target.checked);
   });
   return card;
 }
@@ -1630,6 +1640,9 @@ function buildBodyUI(){
   const host=document.getElementById('bodies');
   host.innerHTML='';
   document.getElementById('bodyCount').textContent='\u00b7 '+bodies.length;
+  // the rebuild below always recreates checkboxes unchecked, so drop any
+  // highlight left over from the selection that was just acted on (or lost)
+  bodies.forEach(b=>setBodyHighlight(b,false));
 
   let groupBtn=null;
   if(bodies.length>1){
