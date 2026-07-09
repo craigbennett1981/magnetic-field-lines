@@ -32,6 +32,13 @@ export const ST = {
   // an index into that history for "what's currently displayed". Playback
   // auto-stops once the scene settles or simTime reaches maxTime.
   maxTime: 10, history: [], historyIndex: -1, lastHistorySimTime: 0,
+  // set when the user scrubs to a new point while a trace for an EARLIER
+  // scrub position is still in flight — since traceAll() is deliberately
+  // not re-dispatched on every single scrub event (that would pile up
+  // overlapping worker jobs when dragging fast), this is how tracer.js
+  // knows to skip rendering that now-stale result and re-trace the current
+  // position instead, once the in-flight one finishes (see tracer.js).
+  scrubTraceWanted: false,
 };
 
 export const MU0 = 4*Math.PI*1e-7, INV4PI = 1/(4*Math.PI);

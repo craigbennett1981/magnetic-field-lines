@@ -135,7 +135,17 @@ export function scrubTo(targetSimTime){
     if(d<bestDiff){ bestDiff=d; best=i; }
   }
   restoreHistoryPoint(best);
-  if(!ST.tracing) traceAll(false);
+  // If a trace is already in flight (from an earlier scrub position, or a
+  // live cycle that was still running when scrubbing started), don't pile
+  // up another overlapping worker job — dragging fast could otherwise queue
+  // up many full traces the workers would have to grind through one at a
+  // time. Instead flag that the current position needs its own trace once
+  // the in-flight one lands; tracer.js's onTraceWorkerMessage checks this
+  // flag and skips rendering that now-stale result in favor of an
+  // immediate re-trace, so the displayed lines never get stuck showing an
+  // earlier scrub position with nothing left to correct them.
+  if(ST.tracing) ST.scrubTraceWanted=true;
+  else traceAll(false);
 }
 // True only while the user has an actual pointer down on the bar — NOT the
 // same as "the bar has DOM focus": a native <input type=range> keeps focus

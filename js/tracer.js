@@ -726,14 +726,23 @@ function onTraceWorkerMessage(e){
   if(error){
     ST.pendingTraceReqId=null; ST.tracing=false;
     const btn=document.getElementById('trace'); if(btn) btn.disabled=false;
+    if(ST.scrubTraceWanted){ ST.scrubTraceWanted=false; traceAll(false); return; }
     if(ST.pendingFullQuality) setStatus('trace failed: '+error);
     return;
   }
   ST.pendingParts.push({verts,mags,jobCount});
   if(--ST.pendingRemaining>0) return;        // still waiting on other workers' chunks
-  finishTrace(ST.pendingParts,ST.pendingFullQuality);
   ST.pendingTraceReqId=null; ST.tracing=false;
   const btn=document.getElementById('trace'); if(btn) btn.disabled=false;
+  if(ST.scrubTraceWanted){
+    // the user scrubbed to a newer position while this trace was still in
+    // flight — it's already stale, so skip rendering it (avoids a flash of
+    // mismatched lines) and go straight to tracing the current position
+    ST.scrubTraceWanted=false;
+    traceAll(false);
+    return;
+  }
+  finishTrace(ST.pendingParts,ST.pendingFullQuality);
   maybeContinueLockstep();
 }
 traceWorkers.forEach(w=>w.onmessage=onTraceWorkerMessage);
