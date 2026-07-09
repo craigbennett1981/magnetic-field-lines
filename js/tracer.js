@@ -6,7 +6,7 @@
 import {ST, MATERIALS, setStatus} from './state.js';
 import {rotOf, xform, arrowVec} from './physics.js';
 import {scene} from './scene.js';
-import {maybeContinueLockstep} from './rendering.js';
+import {maybeContinueLockstep, onLiveTraceLanded} from './rendering.js';
 
 function gatherSeeds(){
   // per body: per-TRIANGLE surface charge (M.n*area) in world space, so seed
@@ -743,6 +743,7 @@ function onTraceWorkerMessage(e){
     return;
   }
   finishTrace(ST.pendingParts,ST.pendingFullQuality);
+  onLiveTraceLanded();   // reveal the matching pose now that its lines are ready (no-op unless a live cycle is waiting on this trace)
   maybeContinueLockstep();
 }
 traceWorkers.forEach(w=>w.onmessage=onTraceWorkerMessage);
@@ -798,6 +799,7 @@ export function traceAll(fullQuality){
     ST.pendingRemaining=0;
     finishTrace([],fullQuality);
     ST.pendingTraceReqId=null; ST.tracing=false; btn.disabled=false;
+    onLiveTraceLanded();
     maybeContinueLockstep();
     return;
   }

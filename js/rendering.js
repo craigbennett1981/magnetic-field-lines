@@ -193,27 +193,43 @@ export function sceneIsSettled(){
   for(const g of ST.groups){ if(moving(g)) return false; }
   return true;
 }
-// Records a history point for the pose just advanced to, then auto-stops
-// playback (full pause — button reverts, motion freezes) once the scene has
-// settled or simTime has reached the configurable max time. Returns true if
-// playback was stopped, so callers can skip any further work (e.g. kicking
-// a live retrace) for this tick.
+// Records a history point for the pose just advanced to (the DATA model —
+// ST.bodies[i].pos/quat — not the displayed meshes, which lag behind until
+// onLiveTraceLanded below reveals them), then auto-stops playback (full
+// pause — button reverts, motion freezes) once the scene has settled or
+// simTime has reached the configurable max time. Returns true if playback
+// was stopped, so callers can skip any further work for this tick.
 function afterAdvance(){
   recordHistoryPointIfDue();
-  if(ST.simTime>=ST.maxTime||sceneIsSettled()){ pause(); return true; }
+  if(ST.simTime>=ST.maxTime||sceneIsSettled()){
+    syncMeshes();  // reveal the final pose now — pause() below does its own
+    timebar.textContent='t = '+ST.simTime.toFixed(3)+' s  ('+SIM.speed+'×)';  // consistent final retrace, so no mismatch risk from showing it early
+    pause();
+    return true;
+  }
   return false;
 }
+// true once a physics step has advanced ST.bodies[i].pos/quat past what's
+// currently displayed (synced to the meshes) — cleared once onLiveTraceLanded
+// reveals the new pose. See advanceAndRetrace for why this exists.
+let pendingMeshSync=false;
 // Gates physics/motion advancement itself on trace completion instead of
 // letting motion run free every rAF tick while lines asynchronously "catch
 // up" (the approach every prior fix tried and which could never fully
-// remove the lag). The object simply does not move to its next pose until
-// the field lines for that pose have finished computing, so the two can
-// never visibly disagree — at the cost of motion being stepped (at a rate
-// bounded by trace speed) rather than always continuously smooth. Called
-// both to bootstrap/self-heal from frame()'s rAF tick (when idle) and,
-// immediately on trace completion, from maybeContinueLockstep() — the
-// latter is the real driver, since it fires as soon as a cycle's lines are
-// ready rather than waiting for the next tick.
+// remove the lag). Critically, this means the *displayed* pose — not just
+// the next physics step — waits on the matching trace too: step() below
+// updates the data model (ST.bodies[i].pos/quat) right away, but syncMeshes()
+// is deliberately NOT called here, so the meshes stay showing the OLD pose
+// (with its correct, matching lines) until onLiveTraceLanded reveals the
+// new pose and lines together, in the same tick. Earlier versions called
+// syncMeshes() immediately and only gated the *next* cycle on the trace,
+// which meant the object visibly jumped to its new pose while the old
+// lines sat there unchanged for the whole trace duration — exactly the
+// mismatch this whole mechanism exists to prevent. Called both to
+// bootstrap/self-heal from frame()'s rAF tick (when idle) and, immediately
+// on trace completion, from maybeContinueLockstep() — the latter is the
+// real driver, since it fires as soon as a cycle's lines are ready rather
+// than waiting for the next tick.
 export function advanceAndRetrace(){
   if(!ST.playing||!ST.bodies.length) return;
   const now=performance.now();
@@ -228,11 +244,20 @@ export function advanceAndRetrace(){
     const n=Math.max(1,Math.min(500,Math.round(dt/SIM.h)));
     const h=dt/n;
     for(let i=0;i<n;i++) step(h);
-    syncMeshes();
-    timebar.textContent='t = '+ST.simTime.toFixed(3)+' s  ('+SIM.speed+'×)';
     if(afterAdvance()) return;
   }
+  pendingMeshSync=true;
   setStatus('computing…',true); traceAll(false);
+}
+// Called once a live-tracing cycle's trace has landed (from tracer.js,
+// right after finishTrace swaps in the new lines) — reveals the pose that
+// trace was computed for, so the object and its field lines always change
+// on screen together in the same rendered frame, never one before the other.
+export function onLiveTraceLanded(){
+  if(!pendingMeshSync) return;
+  pendingMeshSync=false;
+  syncMeshes();
+  timebar.textContent='t = '+ST.simTime.toFixed(3)+' s  ('+SIM.speed+'×)';
 }
 export function maybeContinueLockstep(){
   if(ST.playing) advanceAndRetrace();
