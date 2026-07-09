@@ -137,13 +137,21 @@ export function scrubTo(targetSimTime){
   restoreHistoryPoint(best);
   if(!ST.tracing) traceAll(false);
 }
+// True only while the user has an actual pointer down on the bar — NOT the
+// same as "the bar has DOM focus": a native <input type=range> keeps focus
+// after a click/drag ends (until something else is clicked), so gating the
+// live-sync update on document.activeElement instead of this flag meant the
+// very first interaction silently froze the bar out of sync forever after.
+let scrubDragging=false;
 function updateScrubUI(){
   const bar=document.getElementById('scrubBar');
   if(!bar) return;
   const maxT=ST.history.length?ST.history[ST.history.length-1].simTime:0;
   bar.min='0'; bar.max=String(maxT||0.001); bar.step=String((maxT/200)||0.01);
-  if(document.activeElement!==bar) bar.value=String(ST.simTime);
-  bar.disabled=ST.history.length<2;
+  if(!scrubDragging) bar.value=String(ST.simTime);
+  // stays enabled even with only one recorded point (e.g. right after
+  // load/reset, before Play has run) — a disabled range reads as broken;
+  // scrubbing with nothing yet to scrub through is just a harmless no-op.
   const lbl=document.getElementById('scrubLabel');
   if(lbl) lbl.textContent='t = '+ST.simTime.toFixed(2)+' / '+maxT.toFixed(2)+' s';
 }
@@ -288,4 +296,21 @@ document.getElementById('maxTime').addEventListener('change',e=>{
   ST.maxTime=v>0?v:10;
   updateScrubUI();
 });
-document.getElementById('scrubBar').addEventListener('input',e=>{ scrubTo(+e.target.value); });
+{
+  const scrubBar=document.getElementById('scrubBar');
+  scrubBar.addEventListener('pointerdown',()=>{ scrubDragging=true; });
+  scrubBar.addEventListener('pointerup',()=>{ scrubDragging=false; });
+  scrubBar.addEventListener('pointercancel',()=>{ scrubDragging=false; });
+  // keyboard interaction (arrow keys, click-to-focus-then-arrow) never fires
+  // pointerdown/up, so fall back to clearing the flag once no more 'input'
+  // events have landed for a moment
+  let keyboardScrubTimer=null;
+  scrubBar.addEventListener('input',e=>{
+    scrubTo(+e.target.value);
+    if(!scrubDragging){
+      clearTimeout(keyboardScrubTimer);
+      scrubDragging=true;
+      keyboardScrubTimer=setTimeout(()=>{ scrubDragging=false; },200);
+    }
+  });
+}
