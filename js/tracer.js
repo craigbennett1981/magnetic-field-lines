@@ -19,7 +19,7 @@ function gatherSeeds(){
     const mat=MATERIALS[b.material], R=b.R||rotOf(b);
     const list=[];
     let mx=0,my=0,mz=0;
-    if(mat.cat==='perm'){
+    if(mat.cat==='perm'||mat.cat==='coil'){
       const ml=Math.hypot(...b.Mloc)||1;
       mx=b.Mloc[0]/ml*b.Br; my=b.Mloc[1]/ml*b.Br; mz=b.Mloc[2]/ml*b.Br;
     }else if(b.isSoft){

@@ -5,7 +5,7 @@
 // version looks stale, hard-refresh (cmd/ctrl+shift+R) to bypass any
 // cached copies of the js/*.js module files rather than trusting a normal
 // reload.
-export const APP_VERSION = 'v1.1';
+export const APP_VERSION = 'v1.2';
 
 // Shared mutable simulation state, plus a few static registries/config
 // objects. Every other module imports ST and reads/writes its properties
@@ -82,9 +82,15 @@ export const MATERIALS = {
   bismuth:     {name:'Bismuth',              cat:'dia', chi:-1.66e-4, rho:9780,  sigma:7.7e5},
   graphite:    {name:'Pyrolytic graphite',   cat:'dia', chi:-4e-4,    rho:2200,  sigma:2e5},
 
-  plastic:     {name:'Plastic / non-magnetic', cat:'none', rho:1200, sigma:0}
+  plastic:     {name:'Plastic / non-magnetic', cat:'none', rho:1200, sigma:0},
+
+  // no static Br: driven from user turns/current/length (js/physics.js
+  // updatePermQ, ideal-solenoid B=mu0*N*I/L) rather than a fixed remanence.
+  // Low sigma keeps it eddy-inactive by default (a wound coil isn't a
+  // solid conductive lump the way a bulk magnet or plate is).
+  electromagnet: {name:'Electromagnet (coil)', cat:'coil', rho:5000, sigma:1}
 };
-export const MAT_GROUPS = {perm:'Permanent magnets', soft:'Soft magnetic', para:'Paramagnetic', dia:'Diamagnetic', none:'Non-magnetic'};
+export const MAT_GROUPS = {perm:'Permanent magnets', coil:'Electromagnets', soft:'Soft magnetic', para:'Paramagnetic', dia:'Diamagnetic', none:'Non-magnetic'};
 export const CONDUCTIVE = 1e5;   // sigma above this gets an eddy model
 
 export const SIM = {u:0.001, g:9.81, gravity:false, speed:1, h:1/120};

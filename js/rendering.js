@@ -32,7 +32,7 @@ export function updateArrow(b){
   const mat=MATERIALS[b.material];
   b.arrow=new THREE.ArrowHelper(
     new THREE.Vector3(v[0]/l,v[1]/l,v[2]/l), new THREE.Vector3(...b.pos),
-    b.arrowLen, mat.cat==='perm'?0xffffff:0x9ab6cc, b.arrowLen*0.25, b.arrowLen*0.12);
+    b.arrowLen, (mat.cat==='perm'||mat.cat==='coil')?0xffffff:0x9ab6cc, b.arrowLen*0.25, b.arrowLen*0.12);
   scene.add(b.arrow);
 }
 

@@ -89,6 +89,19 @@ function materialBlockHTML(b){
       '</div><div class="vec"><em>Br (T)</em>'+
       '<input type="number" step="0.05" value="'+b.Br+'" data-k="br">'+
       '<button class="small" data-k="flip">flip N↔S</button></div>';
+  }else if(mat.cat==='coil'){
+    // welding/placing a soft-iron body near this one amplifies it for free
+    // (js/physics.js softSolve already reads driving field from any
+    // charge-emitting body) — no separate "core" property needed here
+    matCtl='<div class="vec"><em>axis</em>'+
+      [0,1,2].map(k=>'<input type="number" step="0.1" value="'+b.Mloc[k].toFixed(1)+'" data-k="m'+k+'" aria-label="axis'+k+'">').join('')+
+      '</div><div class="vec"><em>N · I(A)</em>'+
+      '<input type="number" step="10" value="'+b.turns+'" data-k="turns" aria-label="turns">'+
+      '<input type="number" step="0.5" value="'+b.current+'" data-k="cur" aria-label="current (A)">'+
+      '</div><div class="vec"><em>length</em>'+
+      '<input type="number" step="0.5" value="'+b.coilLen.toFixed(2)+'" data-k="len" aria-label="coil length">'+
+      '<button class="small" data-k="flip">flip N↔S</button></div>'+
+      '<div class="mat-note" data-k="coilnote">≈ '+b.Br.toFixed(3)+' T equivalent (μ₀NI/L)</div>';
   }else if(mat.cat==='soft'){
     matCtl='<div class="mat-note">induced M · μr '+mat.muR.toLocaleString()+' · sat '+mat.Ms+' T'+
       (b.isEddy?' · eddy on':'')+'</div>';
@@ -103,6 +116,7 @@ function bindMaterialBlock(container,b){
     b.material=e.target.value;
     const nm=MATERIALS[b.material];
     if(nm.cat==='perm') b.Br=nm.Br;
+    else if(nm.cat==='coil'){ b.turns=200; b.current=2; b.coilLen=Math.max(1e-3,b.radius*1.4); }
     b.cellM.fill(0); b.edD.fill(0); b.edInit=false;
     refreshDerived(); allocSources(); buildSources(); softSolve(24);
     ST.bodies.forEach(updateArrow); buildBodyUI(); requestTrace(true);
@@ -112,8 +126,13 @@ function bindMaterialBlock(container,b){
       const k=inp.dataset.k, v=+inp.value||0;
       if(k==='br') b.Br=v;
       else if(k==='m0'||k==='m1'||k==='m2') b.Mloc[+k[1]]=v;
+      else if(k==='turns') b.turns=v;
+      else if(k==='cur') b.current=v;
+      else if(k==='len') b.coilLen=Math.max(1e-6,v);
       updatePermQ(b); buildSources(); softSolve(6);
-      ST.bodies.forEach(updateArrow); syncMeshes();
+      ST.bodies.forEach(updateArrow); syncMeshes(); requestTrace(true);
+      const note=container.querySelector('[data-k=coilnote]');
+      if(note) note.textContent='≈ '+b.Br.toFixed(3)+' T equivalent (μ₀NI/L)';
     });
   });
   const flip=container.querySelector('[data-k=flip]');
@@ -157,7 +176,7 @@ function bindMotionBlock(container,motion,onModeChange){
       else if(k==='amp') motion.amp=v;
       else if(k==='hz') motion.hz=v;
       else if(k[0]==='v') motion.v[+k[1]]=v;
-      buildSources(); ST.bodies.forEach(updateArrow); syncMeshes();
+      buildSources(); ST.bodies.forEach(updateArrow); syncMeshes(); requestTrace(true);
     });
   });
 }

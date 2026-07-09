@@ -63,6 +63,10 @@ export async function loadGeometry(pos, sourceName, setup){
     const b={
       name:'B'+(i+1), color, tris, mesh, arrow:null,
       material:'ndfeb_n42', Br:MATERIALS.ndfeb_n42.Br, Mloc:[...axis],
+      // electromagnet-only (mat.cat==='coil'): turns/current/coilLen are
+      // the user-editable knobs; b.Br is re-derived from them (updatePermQ)
+      // rather than being a fixed material constant
+      turns:0, current:0, coilLen:1,
       clP:cl.pos, clS:cl.S, nCl:cl.n, q:new Float64Array(cl.n),
       fcP:fc.pos, fcS:fc.S, nFc:fc.n, fq:new Float64Array(fc.n),
       fill, cellP:fill.cellP, cellV:fill.cellV, nCell:fill.cellV.length,
@@ -175,7 +179,11 @@ export function refreshGroupMassInertia(g){
 }
 export function updatePermQ(b){
   const mat=MATERIALS[b.material];
-  if(mat.cat!=='perm'){ b.q.fill(0); b.fq.fill(0); return; }
+  // ideal-solenoid interior field B=mu0*N*I/L stands in for a fixed
+  // remanence — same equivalent-surface-charge math below then applies
+  // to a coil exactly as it does to a permanent magnet
+  if(mat.cat==='coil') b.Br=MU0*b.turns*b.current/Math.max(1e-9,b.coilLen*SIM.u);
+  if(mat.cat!=='perm'&&mat.cat!=='coil'){ b.q.fill(0); b.fq.fill(0); return; }
   const ml=Math.hypot(...b.Mloc)||1;
   const mx=b.Mloc[0]/ml*b.Br, my=b.Mloc[1]/ml*b.Br, mz=b.Mloc[2]/ml*b.Br;
   for(let i=0;i<b.nCl;i++) b.q[i]=mx*b.clS[i*3]+my*b.clS[i*3+1]+mz*b.clS[i*3+2];
@@ -187,7 +195,7 @@ export function allocSources(){
   let nc=0, nd=0;
   for(const b of ST.bodies){
     const mat=MATERIALS[b.material];
-    if(mat.cat==='perm'){ b.c0=nc; nc+=b.nCl; } else b.c0=-1;
+    if(mat.cat==='perm'||mat.cat==='coil'){ b.c0=nc; nc+=b.nCl; } else b.c0=-1;
     b.d0=-1; b.e0=-1;
     if(b.isSoft){ b.d0=nd; nd+=b.nCell; }
     if(b.isEddy){ b.e0=nd; nd+=b.nEd; }
@@ -622,7 +630,7 @@ export function step(h){
 // physics quantity it actually is rather than duplicated in either caller.
 export function arrowVec(b){
   const mat=MATERIALS[b.material];
-  if(mat.cat==='perm'){
+  if(mat.cat==='perm'||mat.cat==='coil'){
     const R=b.R||rotOf(b), m=b.Mloc;
     return [R[0]*m[0]+R[1]*m[1]+R[2]*m[2],
             R[3]*m[0]+R[4]*m[1]+R[5]*m[2],
