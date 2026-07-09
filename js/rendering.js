@@ -232,35 +232,30 @@ export function advanceAndRetrace(){
     timebar.textContent='t = '+ST.simTime.toFixed(3)+' s  ('+SIM.speed+'×)';
     if(afterAdvance()) return;
   }
-  if(!document.getElementById('live').checked) return;
   setStatus('computing…',true); traceAll(false);
 }
 export function maybeContinueLockstep(){
-  if(ST.playing&&document.getElementById('live').checked) advanceAndRetrace();
+  if(ST.playing) advanceAndRetrace();
 }
 export function frame(ts){
   requestAnimationFrame(frame);
   const dtReal=Math.min(0.05,(ts-ST.lastTS)/1000||0); ST.lastTS=ts;
-  if(ST.playing&&ST.bodies.length){
-    if(!document.getElementById('live').checked){
-      // Live tracing is off, so there's no in-flight trace to fall out of
-      // sync with (lines only refresh on pause / the manual Trace button) —
-      // motion can just run smoothly every tick, as before this change.
-      let dt=dtReal*SIM.speed;
-      const n=Math.max(1,Math.min(4,Math.round(dt/SIM.h)));
-      const h=dt/n;
-      for(let i=0;i<n;i++) step(h);
-      syncMeshes();
-      timebar.textContent='t = '+ST.simTime.toFixed(3)+' s  ('+SIM.speed+'×)';
-      afterAdvance();
-    } else if(!ST.tracing){
-      // Lockstep: only advance once the previous live trace has landed.
-      // In practice onTraceWorkerMessage's maybeContinueLockstep() already
-      // re-kicks the next cycle the instant a trace completes, so this
-      // call is mostly a bootstrap (first play) / self-heal (chain stalled
-      // because the scene just started moving again after settling).
-      advanceAndRetrace();
-    }
+  // Always lockstep-gated, at any speed setting: only advance once the
+  // previous trace has landed. There used to be an opt-out ("live lines"
+  // checkbox) that stepped smoothly every tick instead, decoupled from
+  // tracing entirely, with lines only refreshed on pause/manual-trace/
+  // settle — but that's exactly the kind of stale-lines-during-motion
+  // desync the rest of this file exists to prevent, and it got more
+  // visibly wrong the faster playback ran (more motion between the
+  // increasingly rare retraces). Correctness always wins over raw frame
+  // rate here, so that path is gone: motion is stepped at whatever rate
+  // tracing can keep up with, full stop, regardless of the speed setting.
+  if(ST.playing&&ST.bodies.length&&!ST.tracing){
+    // In practice onTraceWorkerMessage's maybeContinueLockstep() already
+    // re-kicks the next cycle the instant a trace completes, so this call
+    // is mostly a bootstrap (first play) / self-heal (chain stalled
+    // because the scene just started moving again after settling).
+    advanceAndRetrace();
   }
   renderer.render(scene,camera);
 }
