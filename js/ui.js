@@ -342,15 +342,17 @@ document.getElementById('demo4').addEventListener('click',()=>{
   const arr=[];
   makeBox(-22.5,0,0,7,8,8,arr);     // rotor segment A
   makeBox(-14.5,0,0,7,8,8,arr);     // rotor segment B — bolted to A to form one longer 2-pole rotor (kept apart by a hairline gap so they load as two separate bodies to weld, not one fused mesh)
-  makeBox(16,0,0,4,26,26,arr);      // stator core (soft iron)
+  makeBox(16,0,0,4,26,26,arr);      // stator coil — real brushless motors put the driven windings on the (stationary) stator and permanent magnets on the rotor, not the other way round
   loadGeometry(Float32Array.from(arr),'demo: brushless motor',()=>{
     ST.bodies[0].Mloc=[1,0,0];
     ST.bodies[1].Mloc=[1,0,0];
     createGroup([0,1]);
     ST.groups[0].motion={mode:'spin',axis:[0,1,0],rpm:90,amp:5,hz:1,v:[0,0,0]};
-    ST.bodies[2].material='iron'; ST.bodies[2].motion.mode='static';
+    ST.bodies[2].material='electromagnet';
+    ST.bodies[2].Mloc=[1,0,0]; ST.bodies[2].turns=300; ST.bodies[2].current=5; ST.bodies[2].coilLen=4;
+    ST.bodies[2].motion.mode='static';
     document.getElementById('gravity').checked=false; SIM.gravity=false;
     document.getElementById('speed').value='1'; SIM.speed=1;
-    setTimeout(()=>setStatus('press Play — the grouped 2-piece rotor spins at 90 rpm, re-magnetizing the iron stator core each pass — a simplified brushless motor'),100);
+    setTimeout(()=>setStatus('press Play — the grouped 2-piece rotor spins at 90 rpm past a fixed, energized stator coil — a simplified brushless motor'),100);
   });
 });

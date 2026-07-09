@@ -5,7 +5,7 @@
 // version looks stale, hard-refresh (cmd/ctrl+shift+R) to bypass any
 // cached copies of the js/*.js module files rather than trusting a normal
 // reload.
-export const APP_VERSION = 'v1.2';
+export const APP_VERSION = 'v1.3';
 
 // Shared mutable simulation state, plus a few static registries/config
 // objects. Every other module imports ST and reads/writes its properties
