@@ -16,7 +16,7 @@
  unit scale u (metres per STL unit).
 ===================================================================== */
 import {ST, MU0, INV4PI, MATERIALS, CONDUCTIVE, SIM, PALETTE, setStatus, timebar} from './state.js';
-import {splitBodies, areaCentroid, clusterTris, voxelFill, downsampleCells} from './geometry.js';
+import {splitBodies, volumeCentroid, clusterTris, voxelFill, downsampleCells} from './geometry.js';
 import {scene, ctrl, applyCamera} from './scene.js';
 import {syncMeshes, updateArrow, pause, resetHistory} from './rendering.js';
 import {buildBodyUI} from './ui.js';
@@ -31,12 +31,17 @@ export async function loadGeometry(pos, sourceName, setup){
   setStatus('voxelizing bodies…',true);
   for(let i=0;i<parts.length;i++){
     let tris=parts[i];
-    const center=areaCentroid(tris);
+    // voxelize first, in the mesh's original coordinates, so the rotation
+    // pivot (center) can be the true volume centroid rather than a surface
+    // area centroid — then shift both the mesh and the voxel cells by it
+    const fill=voxelFill(tris, 300);
+    const center=volumeCentroid(fill.cellP, fill.cellV);
     tris=Float32Array.from(tris);
     for(let k=0;k<tris.length;k+=3){tris[k]-=center[0];tris[k+1]-=center[1];tris[k+2]-=center[2];}
+    for(let k=0;k<fill.cellP.length;k+=3){fill.cellP[k]-=center[0];fill.cellP[k+1]-=center[1];fill.cellP[k+2]-=center[2];}
+    fill.min=[fill.min[0]-center[0],fill.min[1]-center[1],fill.min[2]-center[2]];
     const cl=clusterTris(tris,clusterCell);
     const fc=clusterTris(tris,forceCell);
-    const fill=voxelFill(tris, 300);
     await new Promise(r=>setTimeout(r,0));
     // bounding radius + bbox extents for defaults
     let rad=0, mn=[1e30,1e30,1e30], mx=[-1e30,-1e30,-1e30];

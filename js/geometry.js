@@ -61,19 +61,23 @@ export function splitBodies(pos){
 }
 
 // ---------- geometry helpers (all in body-local, centered frame) ----------
-export function areaCentroid(tris){
-  let c=[0,0,0], aSum=0;
-  for(let i=0;i<tris.length;i+=9){
-    const e1=[tris[i+3]-tris[i],tris[i+4]-tris[i+1],tris[i+5]-tris[i+2]];
-    const e2=[tris[i+6]-tris[i],tris[i+7]-tris[i+1],tris[i+8]-tris[i+2]];
-    const nx=e1[1]*e2[2]-e1[2]*e2[1], ny=e1[2]*e2[0]-e1[0]*e2[2], nz=e1[0]*e2[1]-e1[1]*e2[0];
-    const a=Math.hypot(nx,ny,nz)*0.5;
-    c[0]+=(tris[i]+tris[i+3]+tris[i+6])/3*a;
-    c[1]+=(tris[i+1]+tris[i+4]+tris[i+7])/3*a;
-    c[2]+=(tris[i+2]+tris[i+5]+tris[i+8])/3*a;
-    aSum+=a;
+// volume/mass centroid (assuming uniform density, which the rest of the
+// app already assumes via mat.rho) from a voxelFill() result — this is
+// each body's true center of mass, used as its rotation pivot. A surface
+// *area* centroid was used here previously; it coincides with the volume
+// centroid for fully symmetric shapes (boxes, spheres) but drifts for
+// anything with non-uniform surface distribution relative to its volume
+// (cones, tapered/rounded/chamfered ends, most real STL parts) — visible
+// as an off-center pivot, most noticeably once several bodies are welded
+// into a group and that per-body drift gets mass-weighted together.
+export function volumeCentroid(cellP,cellV){
+  let c=[0,0,0], vSum=0;
+  for(let i=0;i<cellV.length;i++){
+    const v=cellV[i];
+    c[0]+=cellP[i*3]*v; c[1]+=cellP[i*3+1]*v; c[2]+=cellP[i*3+2]*v;
+    vSum+=v;
   }
-  if(aSum>0){c[0]/=aSum;c[1]/=aSum;c[2]/=aSum;}
+  if(vSum>0){c[0]/=vSum;c[1]/=vSum;c[2]/=vSum;}
   return c;
 }
 export function clusterTris(tris,cell){
