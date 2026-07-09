@@ -2,12 +2,14 @@
 // generated demo scenes. This is also the app's effective entry point: it
 // imports (transitively) every other module and wires up all the DOM event
 // listeners that make the page interactive.
-import {ST, MATERIALS, MAT_GROUPS, SIM, setStatus} from './state.js';
+import {ST, MATERIALS, MAT_GROUPS, SIM, setStatus, APP_VERSION} from './state.js';
 import {parseSTL} from './geometry.js';
 import {refreshDerived, allocSources, buildSources, softSolve, updatePermQ,
         refreshGroupMassInertia, loadGeometry} from './physics.js';
 import {updateArrow, syncMeshes} from './rendering.js';
 import {requestTrace} from './tracer.js';
+
+document.getElementById('appVersion').textContent = 'version '+APP_VERSION;
 
 // ---------- body UI ----------
 function matOptionsHTML(sel){

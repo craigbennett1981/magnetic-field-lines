@@ -1,3 +1,11 @@
+// Bump this by hand with every meaningful change and displayed in the
+// sidebar (index.html) — lets "am I actually on the latest code?" be
+// answered by comparing the on-screen value to this source line. If the
+// displayed version looks stale, hard-refresh (cmd/ctrl+shift+R) to bypass
+// any cached copies of the js/*.js module files rather than trusting a
+// normal reload.
+export const APP_VERSION = 'v1';
+
 // Shared mutable simulation state, plus a few static registries/config
 // objects. Every other module imports ST and reads/writes its properties
 // (e.g. ST.bodies, ST.playing = true) rather than holding its own copy or
