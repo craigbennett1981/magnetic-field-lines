@@ -135,6 +135,17 @@ export function scrubTo(targetSimTime){
     if(d<bestDiff){ bestDiff=d; best=i; }
   }
   restoreHistoryPoint(best);
+  // Drop the currently displayed field lines immediately rather than
+  // leaving a stale, mismatched set on screen until the retrace for this
+  // new position lands — the pose changes instantly (restoreHistoryPoint
+  // just did that above), so the lines that belonged to wherever we were
+  // before are now simply wrong and shouldn't linger even briefly.
+  if(ST.lineGroup){
+    scene.remove(ST.lineGroup);
+    ST.lineGroup.traverse(o=>{o.geometry&&o.geometry.dispose();o.material&&o.material.dispose();});
+    ST.lineGroup=null;
+  }
+  setStatus('computing…',true);
   // If a trace is already in flight (from an earlier scrub position, or a
   // live cycle that was still running when scrubbing started), don't pile
   // up another overlapping worker job — dragging fast could otherwise queue
