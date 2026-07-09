@@ -124,6 +124,13 @@
   #hint{position:absolute; bottom:10px; right:14px; color:var(--dim); font-size:11px;
     pointer-events:none; text-align:right;}
   #timebar{position:absolute; top:10px; left:14px; color:var(--good); font-size:12px; pointer-events:none;}
+  #scrubBox{position:absolute; left:14px; right:14px; bottom:34px;
+    display:flex; align-items:center; gap:10px;
+    background:rgba(16,22,29,.82); border:1px solid var(--line); border-radius:6px;
+    padding:6px 10px; backdrop-filter:blur(2px);}
+  #scrubBox input[type=range]{flex:1;}
+  #scrubBox input[type=range]:disabled{opacity:.35;}
+  #scrubLabel{color:var(--dim); font-size:11px; white-space:nowrap;}
   @media (prefers-reduced-motion: reduce){ *{transition:none !important;} }
   @media (max-width:760px){
     body{flex-direction:column;}
@@ -168,6 +175,7 @@
     </div>
     <div class="vec"><em>gravity</em><input type="checkbox" id="gravity"></div>
     <div class="vec"><em>live lines</em><input type="checkbox" id="live" checked></div>
+    <div class="vec"><em>max time</em><input type="number" id="maxTime" min="0.1" step="1" value="10"><span class="mat-note" style="margin:0">s &middot; auto-stops on settle or at this time</span></div>
   </div>
 
   <div class="box" id="bodiesBox" style="display:none">
@@ -192,6 +200,10 @@
 <div id="viewport">
   <div id="timebar"></div>
   <div id="hint">drag rotate &middot; wheel zoom &middot; shift-drag pan</div>
+  <div id="scrubBox">
+    <input type="range" id="scrubBar" min="0" max="0.001" step="0.01" value="0" disabled>
+    <span id="scrubLabel">t = 0.00 / 0.00 s</span>
+  </div>
 </div>
 
 <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>

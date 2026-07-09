@@ -18,7 +18,7 @@
 import {ST, MU0, INV4PI, MATERIALS, CONDUCTIVE, SIM, PALETTE, setStatus, timebar} from './state.js';
 import {splitBodies, areaCentroid, clusterTris, voxelFill, downsampleCells} from './geometry.js';
 import {scene, ctrl, applyCamera} from './scene.js';
-import {syncMeshes, updateArrow, pause} from './rendering.js';
+import {syncMeshes, updateArrow, pause, resetHistory} from './rendering.js';
 import {buildBodyUI} from './ui.js';
 import {sendBodyShapesToWorkers, requestTrace} from './tracer.js';
 
@@ -97,6 +97,7 @@ export async function loadGeometry(pos, sourceName, setup){
   softSolve(24);
   ST.bodies.forEach(updateArrow);
   syncMeshes();
+  resetHistory();
   buildBodyUI();
   document.getElementById('bodiesBox').style.display='block';
   document.getElementById('traceBox').style.display='block';
@@ -112,6 +113,7 @@ export function clearAll(){
   if(ST.lineGroup){scene.remove(ST.lineGroup); ST.lineGroup=null;}
   if(ST.gridHelper){scene.remove(ST.gridHelper); ST.gridHelper=null;}
   ST.bodies=[]; ST.SRC=null; ST.groups=[];
+  ST.history=[]; ST.historyIndex=-1; ST.lastHistorySimTime=0;
 }
 // mass, inertia, permanent charges, flags — call on material/unit change
 export function refreshDerived(){

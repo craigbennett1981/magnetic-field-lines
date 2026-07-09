@@ -36,12 +36,126 @@ export function updateArrow(b){
   scene.add(b.arrow);
 }
 
+// ---------- timeline history: record / restore / scrub ----------
+// One lightweight snapshot per recorded point — pose plus soft/eddy
+// magnetization state (cellM/edD/edBprev/edInit), NOT field-line geometry.
+// Field lines get re-traced on demand when scrubbing to a point (fast,
+// especially with the GPU tracer) rather than stored, which keeps history
+// memory cheap even over a long recording (the alternative — storing full
+// line geometry per point too — would cost tens of MB instead of a few).
+// Soft/eddy state has to be captured too, not just pos/quat: buildSources()
+// derives the field sources bodies actually emit from cellM/edD, so a scrub
+// target that only restored pose would show CURRENT (wrong) magnetization
+// on a historical rotor/plate instead of what it actually had at that time.
+function snapshotEntity(e){
+  return {
+    pos:[...e.pos], quat:{x:e.quat.x,y:e.quat.y,z:e.quat.z,w:e.quat.w},
+    pos0:[...e.pos0], quat0:{x:e.quat0.x,y:e.quat0.y,z:e.quat0.z,w:e.quat0.w},
+    tRef:e.tRef, vel:[...e.vel], omega:[...e.omega],
+  };
+}
+function recordHistoryPoint(){
+  // if we're recording from somewhere other than the live edge (shouldn't
+  // normally happen — play() already truncates on resume — but guard
+  // against it anyway) drop any stale "future" first so history stays one
+  // linear timeline, never a tree.
+  if(ST.historyIndex>=0 && ST.historyIndex<ST.history.length-1) ST.history.length=ST.historyIndex+1;
+  ST.history.push({
+    simTime: ST.simTime,
+    bodies: ST.bodies.map(b=>({
+      ...snapshotEntity(b),
+      cellM:b.cellM.slice(), edD:b.edD.slice(), edBprev:b.edBprev.slice(), edInit:b.edInit,
+      stuckWithIdx: b._stuckWith ? ST.bodies.indexOf(b._stuckWith) : -1,
+    })),
+    groups: ST.groups.map(g=>({...snapshotEntity(g), stuckWithIdx:-1})),
+  });
+  ST.historyIndex=ST.history.length-1;
+  ST.lastHistorySimTime=ST.simTime;
+  updateScrubUI();
+}
+// throttles recording to ~100 points across the current maxTime, in SIM
+// time (not real time or step count), so granularity stays reasonable
+// however fast/slow playback or lockstep cycles are running
+function recordHistoryPointIfDue(){
+  const interval=ST.maxTime>0?ST.maxTime/100:0.1;
+  if(ST.history.length===0||ST.simTime-ST.lastHistorySimTime>=interval) recordHistoryPoint();
+}
+// (re)starts the timeline from the current state — called once bodies are
+// freshly built/reset, so history[0] is always "t=0, as-loaded/as-reset"
+export function resetHistory(){
+  ST.history=[]; ST.historyIndex=-1; ST.lastHistorySimTime=0;
+  recordHistoryPoint();
+}
+export function restoreHistoryPoint(idx){
+  idx=Math.max(0,Math.min(ST.history.length-1,idx));
+  const snap=ST.history[idx];
+  if(!snap) return;
+  ST.simTime=snap.simTime;
+  snap.bodies.forEach((s,bi)=>{
+    const b=ST.bodies[bi]; if(!b) return;
+    b.pos=[...s.pos]; b.pos0=[...s.pos0]; b.tRef=s.tRef;
+    b.quat.set(s.quat.x,s.quat.y,s.quat.z,s.quat.w);
+    b.quat0.set(s.quat0.x,s.quat0.y,s.quat0.z,s.quat0.w);
+    b.vel=[...s.vel]; b.omega=[...s.omega];
+    b.cellM.set(s.cellM); b.edD.set(s.edD); b.edBprev.set(s.edBprev); b.edInit=s.edInit;
+  });
+  // resolve stuck-contact partners after every body's own state is in place
+  snap.bodies.forEach((s,bi)=>{ if(ST.bodies[bi]) ST.bodies[bi]._stuckWith = s.stuckWithIdx>=0?ST.bodies[s.stuckWithIdx]:null; });
+  snap.groups.forEach((s,gi)=>{
+    const g=ST.groups[gi]; if(!g) return;
+    g.pos=[...s.pos]; g.pos0=[...s.pos0]; g.tRef=s.tRef;
+    g.quat.set(s.quat.x,s.quat.y,s.quat.z,s.quat.w);
+    g.quat0.set(s.quat0.x,s.quat0.y,s.quat0.z,s.quat0.w);
+    g.vel=[...s.vel]; g.omega=[...s.omega];
+  });
+  ST.historyIndex=idx;
+  buildSources(); softSolve(2);
+  ST.bodies.forEach(updateArrow);
+  syncMeshes();
+  timebar.textContent='t = '+ST.simTime.toFixed(3)+' s (scrub)';
+  updateScrubUI();
+}
+// drag/scrub to an arbitrary time — snaps to the nearest recorded point
+// (recorded ~100 times across maxTime, so this is fine-grained enough to
+// feel continuous) and kicks a fresh live-quality retrace for it, since the
+// stored snapshot has no field-line geometry of its own.
+export function scrubTo(targetSimTime){
+  if(!ST.history.length) return;
+  if(ST.playing){
+    // implicit pause: dragging the timeline while playing should stop live
+    // advancement, same as a video scrubber — but skip pause()'s own
+    // buildSources/retrace since restoreHistoryPoint below immediately
+    // does that anyway against the scrubbed-to state instead.
+    ST.playing=false; ST.lastAdvanceReal=null;
+    const p=document.getElementById('play'); if(p) p.innerHTML='&#9654; Play';
+  }
+  let best=0,bestDiff=Infinity;
+  for(let i=0;i<ST.history.length;i++){
+    const d=Math.abs(ST.history[i].simTime-targetSimTime);
+    if(d<bestDiff){ bestDiff=d; best=i; }
+  }
+  restoreHistoryPoint(best);
+  if(!ST.tracing) traceAll(false);
+}
+function updateScrubUI(){
+  const bar=document.getElementById('scrubBar');
+  if(!bar) return;
+  const maxT=ST.history.length?ST.history[ST.history.length-1].simTime:0;
+  bar.min='0'; bar.max=String(maxT||0.001); bar.step=String((maxT/200)||0.01);
+  if(document.activeElement!==bar) bar.value=String(ST.simTime);
+  bar.disabled=ST.history.length<2;
+  const lbl=document.getElementById('scrubLabel');
+  if(lbl) lbl.textContent='t = '+ST.simTime.toFixed(2)+' / '+maxT.toFixed(2)+' s';
+}
+
 // ---------- main loop ----------
 // true once nothing is (or could still be) actively changing the field:
 // no kinematic motion running, no free body/group with meaningful
 // velocity/omega, and no soft/eddy state still relaxing. Conservative by
 // design — anything ambiguous reports "not settled" so a live retrace
-// still happens rather than risking a stale picture.
+// still happens rather than risking a stale picture. Soft/eddy scenes never
+// self-report settled by this definition, so for those the maxTime cap
+// below is what actually bounds playback.
 export function sceneIsSettled(){
   if(ST.anySoft||ST.anyEddy) return false;
   const moving=e=>e.motion.mode!=='static'&&e.motion.mode!=='free'
@@ -49,6 +163,16 @@ export function sceneIsSettled(){
   for(const b of ST.bodies){ if(b.groupId==null&&moving(b)) return false; }
   for(const g of ST.groups){ if(moving(g)) return false; }
   return true;
+}
+// Records a history point for the pose just advanced to, then auto-stops
+// playback (full pause — button reverts, motion freezes) once the scene has
+// settled or simTime has reached the configurable max time. Returns true if
+// playback was stopped, so callers can skip any further work (e.g. kicking
+// a live retrace) for this tick.
+function afterAdvance(){
+  recordHistoryPointIfDue();
+  if(ST.simTime>=ST.maxTime||sceneIsSettled()){ pause(); return true; }
+  return false;
 }
 // Gates physics/motion advancement itself on trace completion instead of
 // letting motion run free every rAF tick while lines asynchronously "catch
@@ -77,12 +201,10 @@ export function advanceAndRetrace(){
     for(let i=0;i<n;i++) step(h);
     syncMeshes();
     timebar.textContent='t = '+ST.simTime.toFixed(3)+' s  ('+SIM.speed+'×)';
+    if(afterAdvance()) return;
   }
   if(!document.getElementById('live').checked) return;
-  const settled=sceneIsSettled();
-  if(!settled){ setStatus('computing…',true); traceAll(false); }
-  else if(!ST.wasSettled) traceAll(true);   // just came to rest — upgrade to one full-quality trace
-  ST.wasSettled=settled;
+  setStatus('computing…',true); traceAll(false);
 }
 export function maybeContinueLockstep(){
   if(ST.playing&&document.getElementById('live').checked) advanceAndRetrace();
@@ -101,6 +223,7 @@ export function frame(ts){
       for(let i=0;i<n;i++) step(h);
       syncMeshes();
       timebar.textContent='t = '+ST.simTime.toFixed(3)+' s  ('+SIM.speed+'×)';
+      afterAdvance();
     } else if(!ST.tracing){
       // Lockstep: only advance once the previous live trace has landed.
       // In practice onTraceWorkerMessage's maybeContinueLockstep() already
@@ -116,6 +239,12 @@ requestAnimationFrame(frame);
 
 export function play(){
   if(!ST.bodies.length) return;
+  // resuming from a scrubbed-back point abandons whatever "future" history
+  // had been recorded past it — playback from here on generates a fresh
+  // one (identical to the old one if nothing was edited, since physics is
+  // deterministic, but there's no redo-branch bookkeeping to maintain)
+  if(ST.historyIndex>=0&&ST.historyIndex<ST.history.length-1) ST.history.length=ST.historyIndex+1;
+  ST.lastHistorySimTime=ST.simTime;
   ST.playing=true;
   document.getElementById('play').innerHTML='&#10074;&#10074; Pause';
   ST.bodies.forEach(b=>{if(b.isEddy)b.edInit=false;});
@@ -145,6 +274,7 @@ document.getElementById('reset').addEventListener('click',()=>{
     g.vel=[0,0,0]; g.omega=[0,0,0]; g._stuckWith=null;
     syncGroupMembers(g);
   }
+  resetHistory();
   buildSources(); softSolve(24); ST.bodies.forEach(updateArrow); syncMeshes(); requestTrace(true);
 });
 document.getElementById('units').addEventListener('change',e=>{SIM.u=+e.target.value; refreshDerived();});
@@ -153,3 +283,9 @@ document.getElementById('gravity').addEventListener('change',e=>{SIM.gravity=e.t
 document.getElementById('lines').addEventListener('input',e=>{
   document.getElementById('linesVal').textContent=e.target.value;});
 document.getElementById('trace').addEventListener('click',()=>requestTrace(true));
+document.getElementById('maxTime').addEventListener('change',e=>{
+  const v=+e.target.value;
+  ST.maxTime=v>0?v:10;
+  updateScrubUI();
+});
+document.getElementById('scrubBar').addEventListener('input',e=>{ scrubTo(+e.target.value); });

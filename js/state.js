@@ -23,9 +23,15 @@ export const ST = {
   pendingParts: null, pendingRemaining: 0,
   gpuTraceSupported: false, gpuMaxTextureSize: 0,
   // main-loop / lockstep bookkeeping (see rendering.js)
-  lastTS: 0, wasSettled: true, lastAdvanceReal: null,
+  lastTS: 0, lastAdvanceReal: null,
   // three.js objects that get replaced wholesale on load/retrace (rendering.js)
   gridHelper: null, lineGroup: null,
+  // timeline scrubbing (see rendering.js): one lightweight snapshot per
+  // recorded point (pose + soft/eddy magnetization state, NOT field-line
+  // geometry — those get re-traced on demand when scrubbing to a point) plus
+  // an index into that history for "what's currently displayed". Playback
+  // auto-stops once the scene settles or simTime reaches maxTime.
+  maxTime: 10, history: [], historyIndex: -1, lastHistorySimTime: 0,
 };
 
 export const MU0 = 4*Math.PI*1e-7, INV4PI = 1/(4*Math.PI);
